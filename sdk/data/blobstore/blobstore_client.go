@@ -20,15 +20,14 @@ import (
 	"io"
 	"time"
 
+	"github.com/cubefs/cubefs/blobstore/api/access"
+	"github.com/cubefs/cubefs/blobstore/common/codemode"
+	ebsproto "github.com/cubefs/cubefs/blobstore/common/proto"
 	"github.com/cubefs/cubefs/proto"
 	"github.com/cubefs/cubefs/util"
-	"github.com/cubefs/cubefs/util/stat"
-
-	"github.com/cubefs/blobstore/api/access"
-	"github.com/cubefs/blobstore/common/codemode"
-	ebsproto "github.com/cubefs/blobstore/common/proto"
 	"github.com/cubefs/cubefs/util/exporter"
 	"github.com/cubefs/cubefs/util/log"
+	"github.com/cubefs/cubefs/util/stat"
 	"github.com/google/uuid"
 )
 
@@ -42,7 +41,6 @@ type BlobStoreClient struct {
 }
 
 func NewEbsClient(cfg access.Config) (*BlobStoreClient, error) {
-
 	cli, err := access.New(cfg)
 	return &BlobStoreClient{
 		client: cli,
@@ -82,11 +80,10 @@ func (ebs *BlobStoreClient) Read(ctx context.Context, volName string, buf []byte
 		BlobSize:  oek.BlobSize,
 		Blobs:     sliceInfos,
 	}
-	//func get has retry
+	// func get has retry
 	log.LogDebugf("TRACE Ebs Read,oek(%v) loc(%v)", oek, loc)
-	var (
-		body io.ReadCloser
-	)
+
+	var body io.ReadCloser
 	defer func() {
 		if body != nil {
 			body.Close()

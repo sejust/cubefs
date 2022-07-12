@@ -76,7 +76,6 @@ import "C"
 import (
 	"context"
 	"fmt"
-	"github.com/cubefs/cubefs/util/buf"
 	"io"
 	syslog "log"
 	"os"
@@ -90,11 +89,11 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/cubefs/blobstore/api/access"
-	"github.com/cubefs/blobstore/common/trace"
+	"github.com/cubefs/cubefs/blobstore/api/access"
+	"github.com/cubefs/cubefs/blobstore/common/trace"
+	"github.com/hashicorp/consul/api"
 
 	"github.com/bits-and-blooms/bitset"
-	// "github.com/cubefs/blobstore/util/log"
 	"github.com/cubefs/cubefs/blockcache/bcache"
 	"github.com/cubefs/cubefs/client/fs"
 	"github.com/cubefs/cubefs/proto"
@@ -102,10 +101,10 @@ import (
 	"github.com/cubefs/cubefs/sdk/data/stream"
 	masterSDK "github.com/cubefs/cubefs/sdk/master"
 	"github.com/cubefs/cubefs/sdk/meta"
+	"github.com/cubefs/cubefs/util/buf"
 	"github.com/cubefs/cubefs/util/errors"
 	"github.com/cubefs/cubefs/util/log"
 	"github.com/cubefs/cubefs/util/stat"
-	"github.com/hashicorp/consul/api"
 )
 
 const (
@@ -200,7 +199,7 @@ type file struct {
 	// dir only
 	dirp *dirStream
 
-	//rw
+	// rw
 	fileWriter *blobstore.Writer
 	fileReader *blobstore.Reader
 }
@@ -874,7 +873,6 @@ func cfs_lsdir(id C.int64_t, fd C.int, direntsInfo []C.struct_cfs_dirent_info, c
 
 	}
 	return n
-
 }
 
 //export cfs_mkdirs
@@ -1074,7 +1072,7 @@ func (c *client) absPath(path string) string {
 }
 
 func (c *client) start() (err error) {
-	var masters = strings.Split(c.masterAddr, ",")
+	masters := strings.Split(c.masterAddr, ",")
 	if c.logDir != "" {
 		if c.logLevel == "" {
 			c.logLevel = "WARN"
@@ -1174,7 +1172,7 @@ func (c *client) checkPermission() (err error) {
 	}
 
 	// checkPermission
-	var mc = masterSDK.NewMasterClientFromString(c.masterAddr, false)
+	mc := masterSDK.NewMasterClientFromString(c.masterAddr, false)
 	var userInfo *proto.UserInfo
 	if userInfo, err = mc.UserAPI().GetAKInfo(c.accessKey); err != nil {
 		return
@@ -1183,7 +1181,7 @@ func (c *client) checkPermission() (err error) {
 		err = proto.ErrNoPermission
 		return
 	}
-	var policy = userInfo.Policy
+	policy := userInfo.Policy
 	if policy.IsOwn(c.volName) {
 		return
 	}

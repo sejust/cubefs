@@ -27,10 +27,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cubefs/blobstore/api/access"
-	"github.com/cubefs/blobstore/common/crc32block"
-	"github.com/cubefs/blobstore/common/proto"
-	"github.com/cubefs/blobstore/util/bytespool"
+	"github.com/cubefs/cubefs/blobstore/api/access"
+	"github.com/cubefs/cubefs/blobstore/common/crc32block"
+	"github.com/cubefs/cubefs/blobstore/common/proto"
+	"github.com/cubefs/cubefs/blobstore/util/bytespool"
 	cproto "github.com/cubefs/cubefs/proto"
 	"github.com/hashicorp/consul/api"
 	"github.com/stretchr/testify/require"
@@ -213,6 +213,7 @@ func verifyCrc(loc *access.Location) bool {
 	}
 	return loc.Crc == crc
 }
+
 func signCrc(loc *access.Location, locs []access.Location) error {
 	first := locs[0]
 	bids := make(map[proto.BlobID]struct{}, 64)
@@ -266,7 +267,7 @@ func TestEbsClient_Write_Read(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	var testCases = []struct {
+	testCases := []struct {
 		size int
 	}{
 		{1},
@@ -280,7 +281,7 @@ func TestEbsClient_Write_Read(t *testing.T) {
 		location, err := blobStoreClient.Write(ctx, "testVol", data, uint32(tc.size))
 		require.Exactly(t, nil, err)
 
-		//read prepare
+		// read prepare
 		blobs := make([]cproto.Blob, 0)
 		for _, info := range location.Blobs {
 			blob := cproto.Blob{
@@ -304,5 +305,4 @@ func TestEbsClient_Write_Read(t *testing.T) {
 		require.NoError(t, err)
 		require.Exactly(t, tc.size, read)
 	}
-
 }

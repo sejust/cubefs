@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/cubefs/cubefs/util/buf"
 	"net/http"
 	_ "net/http/pprof"
 	"path"
@@ -27,13 +26,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cubefs/blobstore/api/access"
-	"github.com/cubefs/blobstore/common/trace"
+	"github.com/cubefs/cubefs/blobstore/api/access"
+	"github.com/cubefs/cubefs/blobstore/common/trace"
+
 	"github.com/cubefs/cubefs/proto"
 	"github.com/cubefs/cubefs/sdk/data/blobstore"
 	"github.com/cubefs/cubefs/sdk/data/stream"
 	masterSDK "github.com/cubefs/cubefs/sdk/master"
 	"github.com/cubefs/cubefs/sdk/meta"
+	"github.com/cubefs/cubefs/util/buf"
 	"github.com/cubefs/cubefs/util/log"
 	"github.com/cubefs/cubefs/util/stat"
 	"github.com/hashicorp/consul/api"
@@ -53,7 +54,7 @@ type PreLoadClient struct {
 	mc   *masterSDK.MasterClient
 	ebsc *blobstore.BlobStoreClient
 	sync.RWMutex
-	fileCache             []fileInfo //file list for target dir
+	fileCache             []fileInfo // file list for target dir
 	vol                   string
 	limitParam            LimitParameters
 	cacheAction           int
@@ -259,7 +260,6 @@ func (c *PreLoadClient) walker(dir string, wg *sync.WaitGroup, currentGoroutineN
 	}
 
 	children, err := c.mw.ReadDir_ll(info.Inode)
-
 	if err != nil {
 		log.LogErrorf("ReadDir_ll path(%v) faild(%v)", dir, err)
 		return err
@@ -305,7 +305,7 @@ func (c *PreLoadClient) allocatePreloadDPWorker(ch <-chan fileInfo) uint64 {
 				total += info.Size
 				cachefino := cache[info.Inode]
 				cachefino.size = info.Size
-				//append
+				// append
 				c.fileCache = append(c.fileCache, cachefino)
 				log.LogDebugf("allocatePreloadDPWorker append:%v", cachefino)
 			}
@@ -315,7 +315,7 @@ func (c *PreLoadClient) allocatePreloadDPWorker(ch <-chan fileInfo) uint64 {
 			delete(cache, key)
 		}
 	}
-	//flush cache
+	// flush cache
 	if len(inodes) != 0 {
 		infos := c.mw.BatchInodeGet(inodes)
 
@@ -324,7 +324,7 @@ func (c *PreLoadClient) allocatePreloadDPWorker(ch <-chan fileInfo) uint64 {
 				total += info.Size
 				cachefino := cache[info.Inode]
 				cachefino.size = info.Size
-				//append
+				// append
 				c.fileCache = append(c.fileCache, cachefino)
 				log.LogDebugf("allocatePreloadDPWorker append#2:%v", cachefino)
 			}
@@ -424,9 +424,9 @@ func (c *PreLoadClient) preloadFileWorker(id int64, jobs <-chan fileInfo, wg *sy
 	for job := range jobs {
 		if noWritableDP == true {
 			log.LogWarnf("no writable dp,ingnore (%v) to cbfs", job.name)
-			continue //consume the job
+			continue // consume the job
 		}
-		total += 1
+		total++
 		log.LogDebugf("worker %v ready to preload(%v)", id, job.name)
 		ino := job.ino
 		//#1 open
@@ -459,7 +459,7 @@ func (c *PreLoadClient) preloadFileWorker(id int64, jobs <-chan fileInfo, wg *sy
 
 		for _, objExtent := range objExtents {
 			size := objExtent.Size
-			var buf = make([]byte, size)
+			buf := make([]byte, size)
 			var n int
 			n, err = fileReader.Read(c.ctx(0, ino), buf, int(objExtent.FileOffset), int(size))
 
@@ -474,7 +474,7 @@ func (c *PreLoadClient) preloadFileWorker(id int64, jobs <-chan fileInfo, wg *sy
 				continue
 			}
 			_, err = c.ec.Write(ino, int(objExtent.FileOffset), buf, 0)
-			//in preload mode,onece extend_hander set to error, streamer is set to error
+			// in preload mode,onece extend_hander set to error, streamer is set to error
 			// so write should failed immediately
 			if err != nil {
 				subErr = true
@@ -489,7 +489,7 @@ func (c *PreLoadClient) preloadFileWorker(id int64, jobs <-chan fileInfo, wg *sy
 		c.ec.CloseStream(ino)
 		if subErr == false {
 			log.LogInfof("worker %v preload (%v) to cbfs success", id, job.name)
-			succeed += 1
+			succeed++
 		}
 	}
 	atomic.AddInt64(&c.preloadFileNumTotal, total)
@@ -523,7 +523,6 @@ func (c *PreLoadClient) preloadFile() error {
 	} else {
 		return errors.New("Preload failed")
 	}
-
 }
 
 func (c *PreLoadClient) CheckColdVolume() bool {
@@ -561,7 +560,7 @@ func (c *PreLoadClient) PreloadDir(target string, count int, ttl uint64, zones s
 	log.LogDebugf("Wait 100s for preload dp get ready")
 	time.Sleep(time.Duration(100) * time.Second)
 	log.LogDebugf("Sleep end")
-	//Step3.2  preload the file
+	// Step3.2  preload the file
 	return c.preloadFile()
 }
 

@@ -56,7 +56,6 @@ func TestNewReader(t *testing.T) {
 }
 
 func TestBuildExtentKey(t *testing.T) {
-
 	testCase := []struct {
 		eks      []proto.ExtentKey
 		expectEk proto.ExtentKey
@@ -313,7 +312,6 @@ func TestAsyncCache(t *testing.T) {
 		reader.cacheAction = tc.cacheAction
 		reader.asyncCache(ctx, "cacheKey", objEk)
 	}
-
 }
 
 func TestNeedCacheL2(t *testing.T) {
@@ -376,16 +374,36 @@ func TestReadSliceRange(t *testing.T) {
 		ebsReadFunc      func(*BlobStoreClient, context.Context, string, []byte, uint64, uint64, proto.ObjExtentKey) (int, error)
 		expectError      error
 	}{
-		{false, proto.ExtentKey{}, MockGetTrue, MockCheckDataPartitionExistTrue,
-			MockReadExtentTrue, MockEbscReadTrue, nil},
-		{false, proto.ExtentKey{}, MockGetTrue, MockCheckDataPartitionExistTrue,
-			MockReadExtentTrue, MockEbscReadFalse, syscall.EIO},
-		{true, proto.ExtentKey{}, MockGetTrue, MockCheckDataPartitionExistTrue,
-			MockReadExtentTrue, MockEbscReadFalse, nil},
-		{true, proto.ExtentKey{}, MockGetFalse, MockCheckDataPartitionExistTrue,
-			MockReadExtentTrue, MockEbscReadFalse, syscall.EIO},
-		{true, proto.ExtentKey{}, MockGetFalse, MockCheckDataPartitionExistTrue,
-			MockReadExtentTrue, MockEbscReadTrue, nil},
+		{
+			false,
+			proto.ExtentKey{},
+			MockGetTrue, MockCheckDataPartitionExistTrue,
+			MockReadExtentTrue, MockEbscReadTrue, nil,
+		},
+		{
+			false,
+			proto.ExtentKey{},
+			MockGetTrue, MockCheckDataPartitionExistTrue,
+			MockReadExtentTrue, MockEbscReadFalse, syscall.EIO,
+		},
+		{
+			true,
+			proto.ExtentKey{},
+			MockGetTrue, MockCheckDataPartitionExistTrue,
+			MockReadExtentTrue, MockEbscReadFalse, nil,
+		},
+		{
+			true,
+			proto.ExtentKey{},
+			MockGetFalse, MockCheckDataPartitionExistTrue,
+			MockReadExtentTrue, MockEbscReadFalse, syscall.EIO,
+		},
+		{
+			true,
+			proto.ExtentKey{},
+			MockGetFalse, MockCheckDataPartitionExistTrue,
+			MockReadExtentTrue, MockEbscReadTrue, nil,
+		},
 	}
 
 	for _, tc := range testCase {
@@ -497,6 +515,7 @@ func MockWriteFalse(client *stream.ExtentClient, inode uint64, offset int, data 
 func MockPutTrue(bc *bcache.BcacheClient, key string, buf []byte) error {
 	return nil
 }
+
 func MockPutFalse(bc *bcache.BcacheClient, key string, buf []byte) error {
 	return errors.New("Bcache put failed")
 }

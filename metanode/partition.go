@@ -29,7 +29,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cubefs/blobstore/api/access"
+	"github.com/cubefs/cubefs/blobstore/api/access"
 	"github.com/cubefs/cubefs/cmd/common"
 	"github.com/cubefs/cubefs/proto"
 	"github.com/cubefs/cubefs/raftstore"
@@ -57,6 +57,7 @@ type sortedPeers []proto.Peer
 func (sp sortedPeers) Len() int {
 	return len(sp)
 }
+
 func (sp sortedPeers) Less(i, j int) bool {
 	return sp[i].ID < sp[j].ID
 }
@@ -444,7 +445,7 @@ func (mp *metaPartition) startRaft() (err error) {
 func (mp *metaPartition) stopRaft() {
 	if mp.raftPartition != nil {
 		// TODO Unhandled errors
-		//mp.raftPartition.Stop()
+		// mp.raftPartition.Stop()
 	}
 	return
 }
@@ -588,8 +589,8 @@ func (mp *metaPartition) store(sm *storeMsg) (err error) {
 			os.RemoveAll(tmpDir)
 		}
 	}()
-	var crcBuffer = bytes.NewBuffer(make([]byte, 0, 16))
-	var storeFuncs = []func(dir string, sm *storeMsg) (uint32, error){
+	crcBuffer := bytes.NewBuffer(make([]byte, 0, 16))
+	storeFuncs := []func(dir string, sm *storeMsg) (uint32, error){
 		mp.storeInode,
 		mp.storeDentry,
 		mp.storeExtend,

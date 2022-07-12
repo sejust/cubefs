@@ -17,19 +17,18 @@ package blobstore
 import (
 	"context"
 	"fmt"
-	"github.com/cubefs/cubefs/util/buf"
 	"sync"
 	"sync/atomic"
 	"syscall"
-
-	"github.com/cubefs/cubefs/util/stat"
 
 	"github.com/cubefs/cubefs/blockcache/bcache"
 	"github.com/cubefs/cubefs/proto"
 	"github.com/cubefs/cubefs/sdk/data/stream"
 	"github.com/cubefs/cubefs/sdk/meta"
 	"github.com/cubefs/cubefs/util"
+	"github.com/cubefs/cubefs/util/buf"
 	"github.com/cubefs/cubefs/util/log"
+	"github.com/cubefs/cubefs/util/stat"
 )
 
 const (
@@ -93,7 +92,7 @@ func (writer *Writer) String() string {
 }
 
 func (writer *Writer) Write(ctx context.Context, offset int, data []byte, flags int) (size int, err error) {
-	//atomic.StoreInt32(&writer.idle, 0)
+	// atomic.StoreInt32(&writer.idle, 0)
 	if writer == nil {
 		return 0, fmt.Errorf("writer is not opened yet")
 	}
@@ -104,13 +103,13 @@ func (writer *Writer) Write(ctx context.Context, offset int, data []byte, flags 
 		err = syscall.EOPNOTSUPP
 		return
 	}
-	//write buffer
+	// write buffer
 	log.LogDebugf("TRACE blobStore Write: ino(%v) offset(%v) len(%v) flags&proto.FlagsSyncWrite(%v)", writer.ino, offset, len(data), flags&proto.FlagsSyncWrite)
 	if flags&proto.FlagsSyncWrite == 0 {
 		size, err = writer.doBufferWrite(ctx, data, offset)
 		return
 	}
-	//parallel io write ebs direct
+	// parallel io write ebs direct
 	size, err = writer.doParallelWrite(ctx, data, offset)
 	return
 }
@@ -140,7 +139,7 @@ func (writer *Writer) doParallelWrite(ctx context.Context, data []byte, offset i
 		}
 	}
 	close(writer.err)
-	//update meta
+	// update meta
 	oeks := make([]proto.ObjExtentKey, 0)
 	for _, wSlice := range wSlices {
 		size += int(wSlice.size)
@@ -303,11 +302,10 @@ func (writer *Writer) asyncCache(ino uint64, offset int, data []byte) {
 	log.LogDebugf("TRACE asyncCache Enter,fileOffset(%v) len(%v)", offset, len(data))
 	write, err := writer.ec.Write(ino, offset, data, 0)
 	log.LogDebugf("TRACE asyncCache Exit,write(%v) err(%v)", write, err)
-
 }
 
 func (writer *Writer) resetBuffer() {
-	//writer.buf = writer.buf[:0]
+	// writer.buf = writer.buf[:0]
 	writer.blockPosition = 0
 }
 
@@ -342,7 +340,7 @@ func (writer *Writer) flush(inode uint64, ctx context.Context, flushFlag bool) (
 	}
 
 	oeks := make([]proto.ObjExtentKey, 0)
-	//update meta
+	// update meta
 	oeks = append(oeks, wSlice.objExtentKey)
 	if err = writer.mw.AppendObjExtentKeys(writer.ino, oeks); err != nil {
 		log.LogErrorf("slice write error,meta append ebsc extent keys fail,ino(%v) fileOffset(%v) len(%v) err(%v)", inode, wSlice.fileOffset, wSlice.size, err)

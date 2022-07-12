@@ -177,7 +177,6 @@ func (reader *Reader) Read(ctx context.Context, buf []byte, offset int, size int
 	}
 	log.LogDebugf("TRACE reader Read Exit. ino(%v)  readN(%v) buf-len(%v)", reader.ino, read, len(buf))
 	return read, nil
-
 }
 
 func (reader *Reader) Close(ctx context.Context) {
@@ -265,7 +264,6 @@ func (reader *Reader) buildExtentKey(rs *rwSlice) {
 		}
 		rs.extentKey = proto.ExtentKey{}
 	}
-
 }
 
 func (reader *Reader) readSliceRange(ctx context.Context, rs *rwSlice) (err error) {
@@ -274,9 +272,7 @@ func (reader *Reader) readSliceRange(ctx context.Context, rs *rwSlice) (err erro
 	cacheKey := util.GenerateKey(reader.volName, reader.ino, rs.fileOffset)
 	log.LogDebugf("TRACE blobStore readSliceRange. ino(%v)  cacheKey(%v) ", reader.ino, cacheKey)
 	buf := make([]byte, rs.rSize)
-	var (
-		readN int
-	)
+	var readN int
 
 	bgTime := stat.BeginStat()
 	stat.EndStat("CacheGet", nil, bgTime, 1)
@@ -286,7 +282,7 @@ func (reader *Reader) readSliceRange(ctx context.Context, rs *rwSlice) (err erro
 		metric.SetWithLabels(err, map[string]string{exporter.Vol: reader.volName})
 	}()
 
-	//read local cache
+	// read local cache
 	if reader.enableBcache {
 		readN, err = reader.bc.Get(cacheKey, buf, rs.rOffset, rs.rSize)
 		if err == nil {
@@ -307,9 +303,9 @@ func (reader *Reader) readSliceRange(ctx context.Context, rs *rwSlice) (err erro
 		}
 	}
 
-	//read cfs and cache to bcache
+	// read cfs and cache to bcache
 	if rs.extentKey != (proto.ExtentKey{}) {
-		//check if dp is exist in preload sence
+		// check if dp is exist in preload sence
 		if err = reader.ec.CheckDataPartitionExsit(rs.extentKey.PartitionId); err == nil {
 			readN, err = reader.ec.ReadExtent(reader.ino, &rs.extentKey, buf, int(rs.rOffset), int(rs.rSize))
 			if err == nil && readN == int(rs.rSize) {
@@ -339,7 +335,7 @@ func (reader *Reader) readSliceRange(ctx context.Context, rs *rwSlice) (err erro
 	read := copy(rs.Data, buf)
 	reader.err <- nil
 
-	//cache full block
+	// cache full block
 	if !reader.needCacheL1() && !reader.needCacheL2() || reader.ec.IsPreloadMode() {
 		log.LogDebugf("TRACE blobStore readSliceRange exit without cache. read counter=%v", read)
 		return nil

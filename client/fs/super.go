@@ -15,6 +15,7 @@
 package fs
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"path"
@@ -24,11 +25,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cubefs/blobstore/api/access"
 	"github.com/hashicorp/consul/api"
 
-	"golang.org/x/net/context"
-
+	"github.com/cubefs/cubefs/blobstore/api/access"
 	"github.com/cubefs/cubefs/depends/bazil.org/fuse"
 	"github.com/cubefs/cubefs/depends/bazil.org/fuse/fs"
 
@@ -67,7 +66,7 @@ type Super struct {
 	sockaddr  string
 	suspendCh chan interface{}
 
-	//data lake
+	// data lake
 	volType        int
 	ebsEndpoint    string
 	CacheAction    int
@@ -92,8 +91,8 @@ const BlobWriterIdleTimeoutPeriod = 10
 // NewSuper returns a new Super.
 func NewSuper(opt *proto.MountOptions) (s *Super, err error) {
 	s = new(Super)
-	var masters = strings.Split(opt.Master, meta.HostsSeparator)
-	var metaConfig = &meta.MetaConfig{
+	masters := strings.Split(opt.Master, meta.HostsSeparator)
+	metaConfig := &meta.MetaConfig{
 		Volume:        opt.Volname,
 		Owner:         opt.Owner,
 		Masters:       masters,
@@ -147,7 +146,7 @@ func NewSuper(opt *proto.MountOptions) (s *Super, err error) {
 		s.bc = bcache.NewBcacheClient()
 	}
 
-	var extentConfig = &stream.ExtentConfig{
+	extentConfig := &stream.ExtentConfig{
 		Volume:            opt.Volname,
 		Masters:           masters,
 		FollowerRead:      opt.FollowerRead,
