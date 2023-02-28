@@ -17,7 +17,7 @@ package blobstore
 // go vet
 //go:generate go vet ./...
 
-// code formats with 'gofumpt' at version v0.2.1
+// code  formats with 'gofumpt' at version v0.2.1
 // go install mvdan.cc/gofumpt@v0.2.1
 //go:generate gofumpt -l -w .
 //go:generate git diff --exit-code
