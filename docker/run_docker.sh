@@ -46,6 +46,11 @@ run_format() {
     ${compose} run format
 }
 
+run_goreleaser() {
+    prepare
+    ${compose} run goreleaser
+}
+
 run_bsgofumpt() {
     prepare
     ${compose} run bs_gofumpt
@@ -147,6 +152,9 @@ for opt in ${ARGS[*]} ; do
         -f|--format)
             cmd=run_format
             ;;
+        --goreleaser)
+            cmd=run_goreleaser
+            ;;
         --bsgofumpt)
             cmd=run_bsgofumpt
             ;;
@@ -204,6 +212,7 @@ case "-$cmd" in
     -run_test) run_unit_test ;;
     -run_format) run_format ;;
     -run_s3test) run_s3test ;;
+    -run_goreleaser) run_goreleaser ;;
     -run_bsgofumpt) run_bsgofumpt ;;
     -run_bsgolint) run_bsgolint ;;
     -clean) clean ;;
