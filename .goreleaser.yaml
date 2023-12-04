@@ -15,7 +15,7 @@ env:
 before:
   hooks:
     - go version
-    - sh -c 'pwd'
+    - sh -c 'echo RELEASER_CHECKSUM={{.ProjectName}}_{{.Version}}_checksums.txt >> docker/bin/goreleaser.env'
 
 dist: docker/dist
 
@@ -181,6 +181,8 @@ archives:
         format: zip
     files:
       - LICENSE
+      - src: docker/bin/goreleaser.env
+        dst: goreleaser.env
 
 checksum:
   name_template: '{{.ProjectName}}_{{.Version}}_checksums.txt'
@@ -195,5 +197,16 @@ changelog:
 
 report_sizes: true
 
-# signs:
-#   - artifacts: archive
+signs:
+  - artifacts: archive
+    signature: "${artifact}.asc"
+    cmd: gpg
+    args:
+      - "--batch"
+      - "-u"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"
+    output: true

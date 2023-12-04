@@ -3,7 +3,9 @@
 name: Goreleaser
 
 on:
-  workflow_dispatch:
+  # workflow_dispatch:
+  push:
+    branches: [ gpg ]
 
 permissions:
   contents: read
@@ -15,13 +17,50 @@ jobs:
       - name: Checkout
         uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
 
-      - name: Release
-        run: |
-          docker/run_docker.sh --goreleaser
+      # - name: Release
+      #   run: |
+      #     docker/run_docker.sh --goreleaser
 
-      - name: Upload Archive
-        uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v3.1.2
+      - name: Import GPG key
+        id: import_gpg
+        uses: crazy-max/ghaction-import-gpg@82a020f1f7f605c65dd2449b392a52c3fcfef7ef # v6
         with:
-          name: cubefs
-          path: docker/dist/cubefs_*
-          retention-days: 7
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          # passphrase: ${{ secrets.PASSPHRASE }}
+
+      - name: Generate checksum with GPG
+        shell: 'script -q -e -c "bash {0}"'
+        run: |
+          perl -E 'say "Is STDOUT a TTY?: ", -t STDOUT ? "yes" : "no"'
+          # source docker/bin/goreleaser.env
+          # cd docker/dist
+          echo $(tty)
+          echo ${FINGERPRINT}
+          echo ${RELEASER_CHECKSUM}
+          # export GPG_TTY=$(tty)
+          gpg --list-secret-keys --keyid-format LONG
+
+          # file /home/user/gpg-no-tty.sh
+          echo "#!/bin/bash" >> /tmp/gpg.sh
+          # echo "gpg --batch --yes --sign --armour --detach-sign README.md" >> /tmp/gpg.sh
+          echo "gpg -u ${FINGERPRINT} --sign --armor --output ${RELEASER_CHECKSUM}.asc --detach-sign ${RELEASER_CHECKSUM}" >> /tmp/gpg.sh
+
+          bash /tmp/gpg.sh
+
+          ls README*
+
+          # gpg2 --batch --yes --sign --armour --detach-sign README.md
+          # gpg --armor --detach-sign ${RELEASER_CHECKSUM}
+          # gpg --batch --yes -v -u ${FINGERPRINT} --sign --armor --detach-sign ${RELEASER_CHECKSUM}
+          # gpg -u ${FINGERPRINT} --sign --armor --output ${RELEASER_CHECKSUM}.asc --detach-sign ${RELEASER_CHECKSUM}
+          # gpg --batch --yes -u ${FINGERPRINT} --output ${RELEASER_CHECKSUM}.asc --detach-sign ${RELEASER_CHECKSUM}
+        env:
+          FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
+          RELEASER_CHECKSUM: README.md
+
+      # - name: Upload Archive
+      #   uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v3.1.2
+      #   with:
+      #     name: cubefs
+      #     path: docker/dist/cubefs_*
+      #     retention-days: 7
