@@ -4,6 +4,7 @@ set -e
 
 docker --version > /dev/null || exit 1
 tag="$(git describe --tags --always)"
+tag="v3.3.2"
 
 help() {
     cat <<EOF
