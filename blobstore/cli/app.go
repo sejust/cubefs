@@ -34,6 +34,7 @@ import (
 	"github.com/cubefs/cubefs/blobstore/cli/shardnode"
 	"github.com/cubefs/cubefs/blobstore/cli/toolbox"
 	"github.com/cubefs/cubefs/blobstore/util/log"
+	"github.com/cubefs/cubefs/blobstore/util/version"
 )
 
 // App blobstore command app
@@ -48,6 +49,7 @@ var App = grumble.New(&grumble.Config{
 	HelpSubCommands:       true,
 	Prompt:                "BS $> ",
 	PromptColor:           color.New(color.FgBlue, color.Bold),
+	ASCIILogoColor:        color.New(color.Bold),
 	Flags: func(f *grumble.Flags) {
 		flags.ConfigRegister(f)
 		flags.VerboseRegister(f)
@@ -87,7 +89,8 @@ func init() {
 	})
 
 	App.SetPrintASCIILogo(func(a *grumble.App) {
-		fmt.Println("|-> Blobstore-cli <-|")
+		fmt.Printf("|-> Blobstore-cli (%s) <-|\n",
+			color.YellowString("%s", version.Version()))
 	})
 
 	registerHistory(App)
