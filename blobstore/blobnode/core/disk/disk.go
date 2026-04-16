@@ -290,8 +290,8 @@ func (ds *DiskStorage) Close(ctx context.Context) {
 	span := trace.SpanFromContextSafe(ctx)
 
 	const isClosed = int32(1)
-	if atomic.LoadInt32(&ds.closed) == isClosed {
-		span.Panicf("can not happened. diskId:%v", ds.DiskID)
+	if !atomic.CompareAndSwapInt32(&ds.closed, 0, isClosed) {
+		span.Warnf("disk already closed, diskId:%v", ds.DiskID)
 		return
 	}
 
@@ -314,7 +314,6 @@ func (ds *DiskStorage) Close(ctx context.Context) {
 
 		span.Warnf("== closing diskID:%d == [DONE]", ds.DiskID)
 		ds.onClosed()
-		atomic.StoreInt32(&ds.closed, isClosed)
 	}()
 
 	for _, pool := range ds.ioPools {

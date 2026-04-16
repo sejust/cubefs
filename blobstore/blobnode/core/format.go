@@ -240,12 +240,17 @@ func (fi *FormatInfo) VerifyV1() error {
 }
 
 func (fi *FormatInfo) CalCheckSum() error {
-	checkSum, err := fi.calCheckSumV2()
+	checkSumV1, err := fi.calCheckSumV1()
 	if err != nil {
 		return err
 	}
+	fi.CheckSum = checkSumV1
 
-	fi.CheckSumV2 = checkSum
+	checkSumV2, err := fi.calCheckSumV2()
+	if err != nil {
+		return err
+	}
+	fi.CheckSumV2 = checkSumV2
 	return nil
 }
 

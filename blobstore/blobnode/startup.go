@@ -383,7 +383,7 @@ func readFormatInfo(ctx context.Context, diskRootPath string, nodeID proto.NodeI
 		// case: format.info v1 upgrade to v2
 		if err == core.ErrFormatV2CrcIsEmpty {
 			if err = formatInfo.VerifyV1(); err != nil {
-				span.Errorf("Failed verify disk[%s] v1 format info, err:%+v", diskRootPath, err)
+				span.Fatalf("Failed verify disk[%s] v1 format info, err:%+v", diskRootPath, err)
 				return nil, err
 			}
 
