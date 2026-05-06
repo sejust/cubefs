@@ -445,6 +445,81 @@ func TestLoadData(t *testing.T) {
 	blobNodeMgr.Start()
 }
 
+// TestApplyUpdateNode_HostPathFilter verifies that applyUpdateNode correctly updates
+// hostPathFilter after a host change: normal disks are stored under the new host key,
+// while Repaired/Dropped disks are excluded from the filter.
+func TestApplyUpdateNode_HostPathFilter(t *testing.T) {
+	blobNodeManager, closeMgr := initTestBlobNodeMgr(t)
+	defer closeMgr()
+
+	_, ctx := trace.StartSpanFromContext(context.Background(), "")
+
+	oldHost := testIdcs[0] + hostPrefix + "1"
+	newHost := testIdcs[0] + hostPrefix + "new"
+
+	// Add node 1.
+	initTestBlobNodeMgrNodes(t, blobNodeManager, 1, 1, testIdcs[0])
+
+	// Add two disks with distinct paths so their filter keys are different.
+	normalPath := "/data/disk-normal"
+	repairedPath := "/data/disk-repaired"
+	baseInfo := clustermgr.BlobNodeDiskInfo{
+		DiskHeartBeatInfo: clustermgr.DiskHeartBeatInfo{
+			Size:         14.5 * 1024 * 1024 * 1024 * 1024,
+			Free:         14.5 * 1024 * 1024 * 1024 * 1024,
+			MaxChunkCnt:  14.5 * 1024 / 16,
+			FreeChunkCnt: 14.5 * 1024 / 16,
+		},
+		DiskInfo: clustermgr.DiskInfo{
+			ClusterID: proto.ClusterID(1),
+			Idc:       testIdcs[0],
+			Rack:      "1",
+			Host:      oldHost,
+			NodeID:    proto.NodeID(1),
+			Status:    proto.DiskStatusNormal,
+		},
+	}
+
+	normalDiskInfo := baseInfo
+	normalDiskInfo.DiskID = proto.DiskID(101)
+	normalDiskInfo.Path = normalPath
+	require.NoError(t, blobNodeManager.applyAddDisk(ctx, &normalDiskInfo))
+
+	repairedDiskInfo := baseInfo
+	repairedDiskInfo.DiskID = proto.DiskID(102)
+	repairedDiskInfo.Path = repairedPath
+	require.NoError(t, blobNodeManager.applyAddDisk(ctx, &repairedDiskInfo))
+
+	// Transition disk 102 to Repaired: Normal→Broken→Repairing→Repaired.
+	require.NoError(t, blobNodeManager.applySetStatus(ctx, proto.DiskID(102), proto.DiskStatusBroken, true))
+	require.NoError(t, blobNodeManager.applySetStatus(ctx, proto.DiskID(102), proto.DiskStatusRepairing, true))
+	require.NoError(t, blobNodeManager.applySetStatus(ctx, proto.DiskID(102), proto.DiskStatusRepaired, true))
+
+	// Call applyUpdateNode to change the node's host.
+	err := blobNodeManager.applyUpdateNode(ctx, &clustermgr.BlobNodeInfo{
+		NodeInfo: clustermgr.NodeInfo{
+			NodeID:   proto.NodeID(1),
+			Host:     newHost,
+			Rack:     "1",
+			Idc:      testIdcs[0],
+			DiskType: proto.DiskTypeHDD,
+		},
+	})
+	require.NoError(t, err)
+
+	// The repaired disk's filter key under the new host must NOT exist.
+	_, repairedInFilter := blobNodeManager.hostPathFilter.Load(newHost + repairedPath)
+	require.False(t, repairedInFilter, "repaired disk should not be stored in hostPathFilter after host update")
+
+	// The normal disk's filter key under the new host must exist.
+	_, normalInFilter := blobNodeManager.hostPathFilter.Load(newHost + normalPath)
+	require.True(t, normalInFilter, "normal disk should be stored in hostPathFilter after host update")
+
+	// The old host keys must have been removed for both disks.
+	_, oldNormalInFilter := blobNodeManager.hostPathFilter.Load(oldHost + normalPath)
+	require.False(t, oldNormalInFilter, "old filter key for normal disk should be removed after host update")
+}
+
 func TestBlobNodeManager_Disk(t *testing.T) {
 	blobNodeManager, closeMgr := initTestBlobNodeMgr(t)
 	defer closeMgr()

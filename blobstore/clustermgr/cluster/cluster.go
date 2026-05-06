@@ -656,7 +656,10 @@ func (d *manager) applyUpdateNode(ctx context.Context, info interface{}) error {
 	d.hostPathFilter.Store(ni.genFilterKey(), ni.nodeID)
 	for _, disk := range diskItems {
 		d.hostPathFilter.Delete(disk.genFilterKey(oldHost))
-		d.hostPathFilter.Store(disk.genFilterKey(nodeInfo.Host), 1)
+		// Only store disks that need filtering (exclude Repaired/Dropped disks).
+		if disk.needFilter() {
+			d.hostPathFilter.Store(disk.genFilterKey(nodeInfo.Host), 1)
+		}
 	}
 
 	return nil
