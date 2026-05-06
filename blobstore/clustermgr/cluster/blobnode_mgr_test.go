@@ -33,7 +33,9 @@ import (
 	apierrors "github.com/cubefs/cubefs/blobstore/common/errors"
 	"github.com/cubefs/cubefs/blobstore/common/proto"
 	"github.com/cubefs/cubefs/blobstore/common/trace"
+	"github.com/cubefs/cubefs/blobstore/testing/mocks"
 	_ "github.com/cubefs/cubefs/blobstore/testing/nolog"
+	"github.com/cubefs/cubefs/blobstore/util/errors"
 )
 
 func TestBlobNodeMgr_Normal(t *testing.T) {
@@ -518,6 +520,136 @@ func TestApplyUpdateNode_HostPathFilter(t *testing.T) {
 	// The old host keys must have been removed for both disks.
 	_, oldNormalInFilter := blobNodeManager.hostPathFilter.Load(oldHost + normalPath)
 	require.False(t, oldNormalInFilter, "old filter key for normal disk should be removed after host update")
+}
+
+func TestMigrateRepairedDiskNodeID(t *testing.T) {
+	blobNodeManager, closeMgr := initTestBlobNodeMgr(t)
+	defer closeMgr()
+
+	// node: NodeID=1, host="z0test-host-1"
+	initTestBlobNodeMgrNodes(t, blobNodeManager, 1, 1, testIdcs[0])
+	_, ctx := trace.StartSpanFromContext(context.Background(), "")
+
+	nodeInfo, err := blobNodeManager.GetNodeInfo(ctx, proto.NodeID(1))
+	require.NoError(t, err)
+	nodeHost := nodeInfo.Host
+
+	// Inject legacy diskItems directly into allDisks with NodeID=0.
+	// diskIDs 1,2,3 → DiskStatusRepaired (should be proposed for migration).
+	// diskID 4       → DiskStatusNormal  (should be skipped).
+	// diskID 5       → DiskStatusRepaired but no matching node host (should warn, skip).
+	legacyDisks := []struct {
+		diskID proto.DiskID
+		status proto.DiskStatus
+		host   string
+	}{
+		{1, proto.DiskStatusRepaired, nodeHost},
+		{2, proto.DiskStatusRepaired, nodeHost},
+		{3, proto.DiskStatusRepaired, nodeHost},
+		{4, proto.DiskStatusNormal, nodeHost},
+		{5, proto.DiskStatusRepaired, "unknown-host-99"},
+	}
+	for _, d := range legacyDisks {
+		di := &diskItem{
+			diskID: d.diskID,
+			info: diskItemInfo{
+				DiskInfo: clustermgr.DiskInfo{
+					Host:   d.host,
+					Status: d.status,
+					NodeID: proto.InvalidNodeID,
+				},
+				extraInfo: &clustermgr.DiskHeartBeatInfo{DiskID: d.diskID},
+			},
+			weightGetter:   blobNodeDiskWeightGetter,
+			weightDecrease: blobNodeDiskWeightDecrease,
+		}
+		blobNodeManager.metaLock.Lock()
+		blobNodeManager.allDisks[d.diskID] = di
+		blobNodeManager.metaLock.Unlock()
+	}
+
+	// Expect Propose to be called exactly 3 times: diskIDs 1, 2, 3.
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockRaft := mocks.NewMockRaftServer(ctrl)
+	mockRaft.EXPECT().Propose(gomock.Any(), gomock.Any()).Times(3).Return(nil)
+	blobNodeManager.SetRaftServer(mockRaft)
+
+	ok := blobNodeManager.migrateRepairedDiskNodeID(ctx)
+	require.True(t, ok)
+
+	// Simulate raft apply for the three proposed disks, verify applyAdminUpdateDisk
+	// correctly updates NodeID in memory and adds disks to ni.disks.
+	for _, diskID := range []proto.DiskID{1, 2, 3} {
+		err := blobNodeManager.applyAdminUpdateDisk(ctx, &clustermgr.BlobNodeDiskInfo{
+			DiskHeartBeatInfo: clustermgr.DiskHeartBeatInfo{DiskID: diskID},
+			DiskInfo:          clustermgr.DiskInfo{NodeID: proto.NodeID(1)},
+		})
+		require.NoError(t, err)
+
+		di, exists := blobNodeManager.getDisk(diskID)
+		require.True(t, exists)
+		di.withRLocked(func() error {
+			require.Equal(t, proto.NodeID(1), di.info.NodeID)
+			return nil
+		})
+	}
+
+	// Disk 4 (Normal status) must remain untouched.
+	di4, exists := blobNodeManager.getDisk(proto.DiskID(4))
+	require.True(t, exists)
+	di4.withRLocked(func() error {
+		require.Equal(t, proto.InvalidNodeID, di4.info.NodeID)
+		return nil
+	})
+
+	// ni.disks should now include the three migrated disks.
+	ni, exists := blobNodeManager.getNode(proto.NodeID(1))
+	require.True(t, exists)
+	ni.withRLocked(func() error {
+		require.Contains(t, ni.disks, proto.DiskID(1))
+		require.Contains(t, ni.disks, proto.DiskID(2))
+		require.Contains(t, ni.disks, proto.DiskID(3))
+		require.NotContains(t, ni.disks, proto.DiskID(4))
+		return nil
+	})
+}
+
+func TestMigrateRepairedDiskNodeID_ProposeError(t *testing.T) {
+	blobNodeManager, closeMgr := initTestBlobNodeMgr(t)
+	defer closeMgr()
+
+	initTestBlobNodeMgrNodes(t, blobNodeManager, 1, 1, testIdcs[0])
+	_, ctx := trace.StartSpanFromContext(context.Background(), "")
+
+	nodeInfo, err := blobNodeManager.GetNodeInfo(ctx, proto.NodeID(1))
+	require.NoError(t, err)
+
+	di := &diskItem{
+		diskID: proto.DiskID(1),
+		info: diskItemInfo{
+			DiskInfo: clustermgr.DiskInfo{
+				Host:   nodeInfo.Host,
+				Status: proto.DiskStatusRepaired,
+				NodeID: proto.InvalidNodeID,
+			},
+			extraInfo: &clustermgr.DiskHeartBeatInfo{DiskID: 1},
+		},
+		weightGetter:   blobNodeDiskWeightGetter,
+		weightDecrease: blobNodeDiskWeightDecrease,
+	}
+	blobNodeManager.metaLock.Lock()
+	blobNodeManager.allDisks[proto.DiskID(1)] = di
+	blobNodeManager.metaLock.Unlock()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockRaft := mocks.NewMockRaftServer(ctrl)
+	mockRaft.EXPECT().Propose(gomock.Any(), gomock.Any()).Return(errors.New("raft unavailable"))
+	blobNodeManager.SetRaftServer(mockRaft)
+
+	ok := blobNodeManager.migrateRepairedDiskNodeID(ctx)
+	require.False(t, ok)
 }
 
 func TestBlobNodeManager_Disk(t *testing.T) {

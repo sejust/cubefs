@@ -148,6 +148,7 @@ type BlobNodeManager struct {
 
 func (b *BlobNodeManager) Start() {
 	ticker := time.NewTicker(time.Duration(b.cfg.RefreshIntervalS) * time.Second)
+	diskMigrated := false
 	go func() {
 		defer ticker.Stop()
 		for {
@@ -155,11 +156,77 @@ func (b *BlobNodeManager) Start() {
 			case <-ticker.C:
 				_, ctxNew := trace.StartSpanFromContext(context.Background(), "")
 				b.checkDroppingNode(ctxNew)
+				if !diskMigrated && b.raftServer.IsLeader() {
+					diskMigrated = b.migrateRepairedDiskNodeID(ctxNew)
+				}
 			case <-b.closeCh:
 				return
 			}
 		}
 	}()
+}
+
+// migrateRepairedDiskNodeID is a one-time migration that finds DiskStatusRepaired disks
+// whose NodeID is 0 (written before the NodeID feature was introduced) and proposes an
+// AdminUpdateDisk via raft to set only the NodeID field. Host/IDC/Rack/DiskSetID are
+// left unchanged and no index rebuild is needed. It returns true when all pending disks
+// have been proposed successfully (caller should not retry), or false if any proposal
+// failed (caller should retry on the next tick).
+func (b *BlobNodeManager) migrateRepairedDiskNodeID(ctx context.Context) bool {
+	span := trace.SpanFromContextSafe(ctx)
+
+	b.metaLock.RLock()
+	hostToNode := make(map[string]*nodeItem, len(b.allNodes))
+	for _, ni := range b.allNodes {
+		hostToNode[ni.info.Host] = ni
+	}
+	b.metaLock.RUnlock()
+
+	hasErr := false
+	for _, di := range b.getAllDisk() {
+		var nodeID proto.NodeID
+		var diskHost string
+		var diskStatus proto.DiskStatus
+		di.withRLocked(func() error {
+			nodeID = di.info.NodeID
+			diskHost = di.info.Host
+			diskStatus = di.info.Status
+			return nil
+		})
+		if nodeID != proto.InvalidNodeID || diskStatus != proto.DiskStatusRepaired {
+			continue
+		}
+
+		ni, ok := hostToNode[diskHost]
+		if !ok {
+			span.Warnf("legacy disk[%d] host=%s has no matching node", di.diskID, diskHost)
+			continue
+		}
+
+		// Only carry DiskID + NodeID; applyAdminUpdateDisk will skip all other zero fields.
+		// NodeID is not an indexed field, so no index rebuild is needed.
+		diskInfo := clustermgr.BlobNodeDiskInfo{}
+		diskInfo.DiskID = di.diskID
+		ni.withRLocked(func() error {
+			diskInfo.NodeID = ni.nodeID
+			return nil
+		})
+
+		data, err := json.Marshal(&diskInfo)
+		if err != nil {
+			span.Errorf("migrate legacy disk[%d] json marshal failed: %v", di.diskID, err)
+			hasErr = true
+			continue
+		}
+		proposeInfo := base.EncodeProposeInfo(b.GetModuleName(), OperTypeAdminUpdateDisk, data, base.ProposeContext{ReqID: span.TraceID()})
+		if err = b.raftServer.Propose(ctx, proposeInfo); err != nil {
+			span.Errorf("migrate legacy disk[%d] propose failed: %v", di.diskID, err)
+			hasErr = true
+			continue
+		}
+		span.Warnf("migrated legacy disk[%d] via raft AdminUpdateDisk: nodeID=%d", di.diskID, diskInfo.NodeID)
+	}
+	return !hasErr
 }
 
 func (b *BlobNodeManager) GetDiskInfo(ctx context.Context, id proto.DiskID) (*clustermgr.BlobNodeDiskInfo, error) {
@@ -942,7 +1009,15 @@ func (b *BlobNodeManager) applyAdminUpdateDisk(ctx context.Context, diskInfo *cl
 		return ErrDiskNotExist
 	}
 
-	return disk.withLocked(func() error {
+	needAddDiskNode := false
+	err := disk.withLocked(func() error {
+		// Fix legacy disks that have NodeID=0 (written before the NodeID feature).
+		// NodeID is not an indexed field, so only the record itself needs updating.
+		if diskInfo.NodeID != proto.InvalidNodeID && disk.info.NodeID == proto.InvalidNodeID {
+			disk.info.NodeID = diskInfo.NodeID
+			needAddDiskNode = true
+		}
+
 		if diskInfo.Status.IsValid() {
 			disk.info.Status = diskInfo.Status
 		}
@@ -960,6 +1035,20 @@ func (b *BlobNodeManager) applyAdminUpdateDisk(ctx context.Context, diskInfo *cl
 		diskRecord := b.diskInfoToDiskInfoRecord(&clustermgr.BlobNodeDiskInfo{DiskInfo: disk.info.DiskInfo, DiskHeartBeatInfo: *heartbeatInfo})
 		return b.nodeDiskTable.UpdateDisk(diskInfo.DiskID, diskRecord)
 	})
+	if err != nil {
+		return err
+	}
+
+	if needAddDiskNode {
+		if ni, found := b.getNode(diskInfo.NodeID); found {
+			ni.withLocked(func() error {
+				ni.disks[diskInfo.DiskID] = disk
+				return nil
+			})
+		}
+	}
+
+	return nil
 }
 
 func (b *BlobNodeManager) diskInfoToDiskInfoRecord(info *clustermgr.BlobNodeDiskInfo) *normaldb.BlobNodeDiskInfoRecord {
