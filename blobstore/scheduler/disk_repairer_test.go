@@ -212,6 +212,121 @@ func TestDiskRepairerLoad(t *testing.T) {
 		err := mgr.Load()
 		require.Error(t, err)
 	}
+	{
+		// inited task should not be locked during loading, otherwise popTaskAndPrepare will be blocked after restart
+		mgr := newDiskRepairer(t)
+		t1, _ := mockGenMigrateTask(proto.TaskTypeDiskRepair, "z0", 1, 1, proto.MigrateStateInited, newMockVolInfoMap()).ToTask()
+		mgr.clusterMgrCli.(*MockClusterMgrAPI).EXPECT().ListMigratingDisks(any, any).Return([]*client.MigratingDiskMeta{{Disk: &client.DiskInfoSimple{DiskID: proto.DiskID(1)}}}, nil)
+		mgr.clusterMgrCli.(*MockClusterMgrAPI).EXPECT().ListAllMigrateTasks(any, any).Return([]*proto.Task{t1}, nil)
+		err := mgr.Load()
+		require.NoError(t, err)
+
+		base.VolTaskLockerInst().Unlock(context.Background(), 1)
+		err = base.VolTaskLockerInst().TryLock(context.Background(), 1)
+		require.NoError(t, err)
+		base.VolTaskLockerInst().Unlock(context.Background(), 1)
+	}
+	{
+		// prepared task should keep lock after loading to prevent concurrent task on same volume
+		mgr := newDiskRepairer(t)
+		t1, _ := mockGenMigrateTask(proto.TaskTypeDiskRepair, "z0", 1, 1, proto.MigrateStatePrepared, newMockVolInfoMap()).ToTask()
+		mgr.clusterMgrCli.(*MockClusterMgrAPI).EXPECT().ListMigratingDisks(any, any).Return([]*client.MigratingDiskMeta{{Disk: &client.DiskInfoSimple{DiskID: proto.DiskID(1)}}}, nil)
+		mgr.clusterMgrCli.(*MockClusterMgrAPI).EXPECT().ListAllMigrateTasks(any, any).Return([]*proto.Task{t1}, nil)
+		err := mgr.Load()
+		require.NoError(t, err)
+
+		err = base.VolTaskLockerInst().TryLock(context.Background(), 1)
+		require.ErrorIs(t, err, base.ErrVidTaskConflict)
+		base.VolTaskLockerInst().Unlock(context.Background(), 1)
+	}
+}
+
+func TestDiskRepairerRestartRecoveryLockFlow(t *testing.T) {
+	t.Run("inited task from load can continue prepare", func(t *testing.T) {
+		mgr := newDiskRepairer(t)
+		t1, _ := mockGenMigrateTask(proto.TaskTypeDiskRepair, "z0", 1, 1, proto.MigrateStateInited, newMockVolInfoMap()).ToTask()
+		mgr.clusterMgrCli.(*MockClusterMgrAPI).EXPECT().ListMigratingDisks(any, any).Return(
+			[]*client.MigratingDiskMeta{{Disk: &client.DiskInfoSimple{DiskID: proto.DiskID(1)}}}, nil,
+		)
+		mgr.clusterMgrCli.(*MockClusterMgrAPI).EXPECT().ListAllMigrateTasks(any, any).Return([]*proto.Task{t1}, nil)
+		require.NoError(t, mgr.Load())
+
+		// If load phase locked inited task by mistake, this call will return ErrVolNotOnlyOneTask
+		// and GetVolumeInfo expectation will not be met.
+		mgr.clusterMgrCli.(*MockClusterMgrAPI).EXPECT().GetVolumeInfo(any, any).Return(nil, errMock)
+		err := mgr.popTaskAndPrepare()
+		require.ErrorIs(t, err, errMock)
+	})
+
+	t.Run("prepared task from load should block same-vid prepare", func(t *testing.T) {
+		mgr := newDiskRepairer(t)
+		t1, _ := mockGenMigrateTask(proto.TaskTypeDiskRepair, "z0", 1, 1, proto.MigrateStatePrepared, newMockVolInfoMap()).ToTask()
+		mgr.clusterMgrCli.(*MockClusterMgrAPI).EXPECT().ListMigratingDisks(any, any).Return(
+			[]*client.MigratingDiskMeta{{Disk: &client.DiskInfoSimple{DiskID: proto.DiskID(1)}}}, nil,
+		)
+		mgr.clusterMgrCli.(*MockClusterMgrAPI).EXPECT().ListAllMigrateTasks(any, any).Return([]*proto.Task{t1}, nil)
+		require.NoError(t, mgr.Load())
+		defer base.VolTaskLockerInst().Unlock(context.Background(), 1)
+
+		initedTask := mockGenMigrateTask(proto.TaskTypeDiskRepair, "z0", 1, 1, proto.MigrateStateInited, newMockVolInfoMap())
+		mgr.prepareQueue.PushTask(initedTask.TaskID, initedTask)
+		err := mgr.popTaskAndPrepare()
+		require.ErrorIs(t, err, base.ErrVolNotOnlyOneTask)
+	})
+}
+
+func TestDiskRepairerRestartRecoveryAcquireTaskWithIPChange(t *testing.T) {
+	ctx := context.Background()
+	idc := "z0"
+
+	t.Run("load prepared task then acquire refreshes host", func(t *testing.T) {
+		mgr := newDiskRepairer(t)
+		task := mockGenMigrateTask(proto.TaskTypeDiskRepair, idc, 1, 1, proto.MigrateStatePrepared, newMockVolInfoMap())
+		oldHost := task.Sources[0].Host
+		task.Destination.Host = oldHost
+		taskInDB, err := task.ToTask()
+		require.NoError(t, err)
+
+		mgr.clusterMgrCli.(*MockClusterMgrAPI).EXPECT().ListMigratingDisks(any, any).Return(
+			[]*client.MigratingDiskMeta{{Disk: &client.DiskInfoSimple{DiskID: proto.DiskID(1)}}}, nil,
+		)
+		mgr.clusterMgrCli.(*MockClusterMgrAPI).EXPECT().ListAllMigrateTasks(any, any).Return([]*proto.Task{taskInDB}, nil)
+		require.NoError(t, mgr.Load())
+		defer base.VolTaskLockerInst().Unlock(context.Background(), uint32(task.Vid()))
+
+		mgr.diskGetter.(*MockDiskGetter).EXPECT().GetDisk(any).AnyTimes().Return(&client.DiskInfoSimple{
+			DiskID: proto.DiskID(10001),
+			Host:   "http://127.9.9.9:9000",
+		}, true)
+		mgr.clusterMgrCli.(*MockClusterMgrAPI).EXPECT().UpdateMigrateTask(any, any).Return(nil)
+
+		got, err := mgr.AcquireTask(ctx, idc)
+		require.NoError(t, err)
+		require.Equal(t, task.TaskID, got.TaskID)
+	})
+
+	t.Run("load prepared task then acquire without host change", func(t *testing.T) {
+		mgr := newDiskRepairer(t)
+		task := mockGenMigrateTask(proto.TaskTypeDiskRepair, idc, 1, 1, proto.MigrateStatePrepared, newMockVolInfoMap())
+		taskInDB, err := task.ToTask()
+		require.NoError(t, err)
+
+		mgr.clusterMgrCli.(*MockClusterMgrAPI).EXPECT().ListMigratingDisks(any, any).Return(
+			[]*client.MigratingDiskMeta{{Disk: &client.DiskInfoSimple{DiskID: proto.DiskID(1)}}}, nil,
+		)
+		mgr.clusterMgrCli.(*MockClusterMgrAPI).EXPECT().ListAllMigrateTasks(any, any).Return([]*proto.Task{taskInDB}, nil)
+		require.NoError(t, mgr.Load())
+		defer base.VolTaskLockerInst().Unlock(context.Background(), uint32(task.Vid()))
+
+		mgr.diskGetter.(*MockDiskGetter).EXPECT().GetDisk(any).AnyTimes().Return(&client.DiskInfoSimple{
+			DiskID: proto.DiskID(10001),
+			Host:   task.Sources[0].Host,
+		}, true)
+
+		got, err := mgr.AcquireTask(ctx, idc)
+		require.NoError(t, err)
+		require.Equal(t, task.TaskID, got.TaskID)
+	})
 }
 
 func TestDiskRepairerRun(t *testing.T) {

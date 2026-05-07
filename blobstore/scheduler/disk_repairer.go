@@ -116,7 +116,7 @@ func (mgr *DiskRepairMgr) Load() error {
 			junkTasks = append(junkTasks, task)
 			continue
 		}
-		if task.Running() {
+		if task.State == proto.MigrateStatePrepared || task.State == proto.MigrateStateWorkCompleted {
 			err = base.VolTaskLockerInst().TryLock(ctx, uint32(task.Vid()))
 			if err != nil {
 				return fmt.Errorf("repair task conflict: task[%+v], err[%+v]",
