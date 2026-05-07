@@ -37,6 +37,7 @@ require (
 	github.com/opentracing/opentracing-go v1.2.0
 	github.com/peterbourgon/diskv/v3 v3.0.1
 	github.com/prometheus/client_golang v1.13.0
+	github.com/prometheus/client_model v0.3.0
 	github.com/rs/xid v1.5.0
 	github.com/samsarahq/thunder v0.0.0-20211005041752-96f4331b7baa
 	github.com/shirou/gopsutil v3.21.11+incompatible
@@ -108,7 +109,6 @@ require (
 	github.com/onsi/gomega v1.34.0 // indirect
 	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/prometheus/client_model v0.3.0 // indirect
 	github.com/prometheus/common v0.37.0 // indirect
 	github.com/prometheus/procfs v0.8.0 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect

@@ -70,6 +70,7 @@ func TestVolumeRouteMgr(t *testing.T) {
 	err = routeMgr.LoadRoute(ctx)
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), routeMgr.GetRouteVersion())
+	go routeMgr.Loop()
 
 	// add 1 item, [2]
 	item1 := &base.RouteItem{
@@ -146,4 +147,51 @@ func TestVolumeRouteMgr(t *testing.T) {
 	require.Equal(t, 2, len(items5))
 
 	routeMgr2.Close()
+}
+
+func TestVolumeRouteMgr_NoDeleteWhenStableLessThanTruncate(t *testing.T) {
+	ctx := context.Background()
+	ringBufferSize := uint32(10)
+	dbPath := os.TempDir() + "/" + uuid.NewString() + strconv.FormatInt(rand.Int63n(math.MaxInt64), 10)
+	volumeDB, err := volumedb.Open(dbPath)
+	if err != nil {
+		log.Error("open db error")
+		return
+	}
+	defer os.RemoveAll(dbPath)
+
+	storage, err := volumedb.OpenVolumeTable(volumeDB)
+	if err != nil {
+		log.Error("open volume table error")
+		return
+	}
+	base.RemoveOldRouteInternal = 1 * time.Second
+	// routeMgr
+	routeMgr := base.NewRouteMgr(ringBufferSize, true, routeRecordToRouteItem, storage)
+	err = routeMgr.LoadRoute(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), routeMgr.GetRouteVersion())
+	go routeMgr.Loop()
+
+	// add 1 item, [2]
+	item1 := &base.RouteItem{
+		RouteVersion: proto.RouteVersion(routeMgr.GenRouteVersion(ctx, 1)),
+		Type:         proto.RouteItemTypeAddVolume,
+		ItemDetail:   &routeItemVolumeAdd{Vid: 2},
+	}
+	routeMgr.InsertRouteItems(ctx, []*base.RouteItem{item1})
+	require.Equal(t, uint64(2), routeMgr.GetRouteVersion())
+
+	err = storage.PutVolumesAndUnitsAndRoutes(nil, nil, []*base.RouteInfoRecord{routeItemToRouteRecord(item1)})
+	require.NoError(t, err)
+
+	// wait util remove the old items done if any
+	time.Sleep(3 * time.Second)
+	items, isLatest := routeMgr.GetRouteItems(ctx, 1)
+	require.Equal(t, false, isLatest)
+	require.Equal(t, 1, len(items))
+
+	routeRecord, err := storage.GetFirstRoute()
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), uint64(routeRecord.RouteVersion))
 }

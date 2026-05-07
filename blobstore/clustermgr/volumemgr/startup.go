@@ -203,6 +203,7 @@ func (v *VolumeMgr) SetRaftServer(raftServer raftserver.RaftServer) {
 func (v *VolumeMgr) Start() {
 	go v.taskLoop()
 	go v.loop()
+	go v.routeLoop()
 }
 
 func (v *VolumeMgr) loadVolume(ctx context.Context) error {
@@ -265,4 +266,5 @@ func (v *VolumeMgr) loadRoute(ctx context.Context) error {
 
 func (v *VolumeMgr) Close() {
 	close(v.closeLoopChan)
+	v.routeMgr.Close()
 }

@@ -1,12 +1,35 @@
 package base
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/cubefs/cubefs/blobstore/common/proto"
 )
+
+type routeStorageMock struct {
+	firstRoute      *RouteInfoRecord
+	deleteCalled    bool
+	deleteCalledNum int
+	deleteBefore    proto.RouteVersion
+}
+
+func (m *routeStorageMock) GetFirstRoute() (*RouteInfoRecord, error) {
+	return m.firstRoute, nil
+}
+
+func (m *routeStorageMock) ListRoute() ([]*RouteInfoRecord, error) {
+	return nil, nil
+}
+
+func (m *routeStorageMock) DeleteOldRoutes(before proto.RouteVersion) error {
+	m.deleteCalled = true
+	m.deleteCalledNum++
+	m.deleteBefore = before
+	return nil
+}
 
 func TestRouteItemRing(t *testing.T) {
 	ring := newRouteItemRing(3)
@@ -37,4 +60,17 @@ func TestRouteItemRing(t *testing.T) {
 	ring.put(item4)
 	assert.Equal(t, ring.getMinVer(), proto.RouteVersion(2))
 	assert.Equal(t, ring.getMaxVer(), proto.RouteVersion(4))
+}
+
+func TestRemoveOldRouteItems_NoDeleteWhenStableLessThanTruncate(t *testing.T) {
+	storage := &routeStorageMock{
+		firstRoute: &RouteInfoRecord{RouteVersion: proto.RouteVersion(1)},
+	}
+	routeMgr := NewRouteMgr(10, false, nil, storage)
+	routeMgr.stableRouteVersion = proto.RouteVersion(5)
+
+	err := routeMgr.removeOldRouteItems(context.Background())
+	assert.NoError(t, err)
+	assert.False(t, storage.deleteCalled)
+	assert.Equal(t, 0, storage.deleteCalledNum)
 }

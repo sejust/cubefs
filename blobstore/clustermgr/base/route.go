@@ -136,7 +136,7 @@ func (r *RouteMgr) removeOldRouteItems(ctx context.Context) error {
 	}
 
 	stableRouteVersion := atomic.LoadUint64((*uint64)(&r.stableRouteVersion))
-	if uint64(item.RouteVersion) < stableRouteVersion-uint64(r.truncateIntervalNum) {
+	if uint64(item.RouteVersion)+uint64(r.truncateIntervalNum) < stableRouteVersion {
 		if err := r.storage.DeleteOldRoutes(proto.RouteVersion(stableRouteVersion-uint64(r.truncateIntervalNum)) + 1); err != nil {
 			span.Errorf("delete oldest route items failed: %s", err.Error())
 			return fmt.Errorf("delete oldest route items failed: %s", err.Error())

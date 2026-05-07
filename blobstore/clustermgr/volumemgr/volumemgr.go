@@ -939,3 +939,7 @@ func (v *VolumeMgr) getCreateVolumeCount(ctx context.Context, modeConf codeModeC
 
 	return util.Max(volCount, curVolCount+writableSpaceVolCount)
 }
+
+func (v *VolumeMgr) routeLoop() {
+	v.routeMgr.Loop()
+}
