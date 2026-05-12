@@ -153,6 +153,20 @@ func (mr *MockShardnodeAccessMockRecorder) ListBlob(arg0, arg1, arg2 interface{}
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBlob", reflect.TypeOf((*MockShardnodeAccess)(nil).ListBlob), arg0, arg1, arg2)
 }
 
+// RepairSlice mocks base method.
+func (m *MockShardnodeAccess) RepairSlice(arg0 context.Context, arg1 string, arg2 shardnode.RepairSliceArgs) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RepairSlice", arg0, arg1, arg2)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RepairSlice indicates an expected call of RepairSlice.
+func (mr *MockShardnodeAccessMockRecorder) RepairSlice(arg0, arg1, arg2 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RepairSlice", reflect.TypeOf((*MockShardnodeAccess)(nil).RepairSlice), arg0, arg1, arg2)
+}
+
 // SealBlob mocks base method.
 func (m *MockShardnodeAccess) SealBlob(arg0 context.Context, arg1 string, arg2 shardnode.SealBlobArgs) error {
 	m.ctrl.T.Helper()

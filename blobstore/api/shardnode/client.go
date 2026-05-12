@@ -45,6 +45,7 @@ type AccessAPI interface {
 	AllocSlice(ctx context.Context, host string, args AllocSliceArgs) (ret AllocSliceRet, err error)
 	FindAndDeleteBlob(ctx context.Context, host string, args DeleteBlobArgs) (ret GetBlobRet, err error)
 	DeleteBlobRaw(ctx context.Context, host string, args DeleteBlobRawArgs) error
+	RepairSlice(ctx context.Context, host string, args RepairSliceArgs) error
 	GetShardStats(ctx context.Context, host string, args GetShardArgs) (ret ShardStats, err error)
 }
 
@@ -95,5 +96,9 @@ func (c *FakeClient) FindAndDeleteBlob(ctx context.Context, host string, args De
 }
 
 func (c *FakeClient) DeleteBlobRaw(ctx context.Context, host string, args DeleteBlobRawArgs) error {
+	return errcode.ErrShardNodeUnsupport
+}
+
+func (c *FakeClient) RepairSlice(ctx context.Context, host string, args RepairSliceArgs) error {
 	return errcode.ErrShardNodeUnsupport
 }

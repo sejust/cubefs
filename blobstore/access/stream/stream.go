@@ -160,6 +160,10 @@ type StreamConfig struct {
 	DeleteIntoShardnodePercentage int64 `json:"delete_into_shardnode_percentage"`
 	deleteRoundrobin              int64 `json:"-"`
 
+	// RepairIntoShardnodePercentage roundrobin percentage [1-100]
+	RepairIntoShardnodePercentage int64 `json:"repair_into_shardnode_percentage"`
+	repairRoundrobin              int64 `json:"-"`
+
 	MemPoolSizeClasses map[int]int `json:"mem_pool_size_classes"`
 
 	// CodeModesPutQuorums
@@ -264,6 +268,10 @@ func confCheck(cfg *StreamConfig) error {
 	if cfg.DeleteIntoShardnodePercentage > 100 {
 		cfg.DeleteIntoShardnodePercentage = 100
 	}
+	defaulter.IntegerLess(&cfg.RepairIntoShardnodePercentage, 0)
+	if cfg.RepairIntoShardnodePercentage > 100 {
+		cfg.RepairIntoShardnodePercentage = 100
+	}
 
 	defaulter.LessOrEqual(&cfg.ClusterConfig.CMClientConfig.Config.ClientTimeoutMs, defaultTimeoutClusterMgr)
 	defaulter.LessOrEqual(&cfg.BlobnodeConfig.ClientTimeoutMs, defaultTimeoutBlobnode)
@@ -315,8 +323,9 @@ func NewStreamHandler(cfg *StreamConfig, stopCh <-chan struct{}) (h StreamHandle
 		// Do not use rpc retry, because the stream blob handles retries itself
 		defaulter.LessOrEqual(&cfg.ShardnodeConfig.Config.Retry, int(1))
 		handler.shardnodeClient = shardnode.New(cfg.ShardnodeConfig.Config)
-	} else { // disable write delete msg to shardnode
+	} else { // disable write delete/repair msg to shardnode
 		handler.StreamConfig.DeleteIntoShardnodePercentage = 0
+		handler.StreamConfig.RepairIntoShardnodePercentage = 0
 	}
 
 	if err = clustermgr.LoadExtendCodemode(context.Background(), handler.clusterController); err != nil {
@@ -410,6 +419,15 @@ func (h *Handler) sendRepairMsgBg(ctx context.Context, blob blobIdent, badIdxes 
 func (h *Handler) sendRepairMsg(ctx context.Context, blob blobIdent, badIdxes []uint8) {
 	span := trace.SpanFromContextSafe(ctx)
 	span.Infof("to repair %s indexes(%+v)", blob.String(), badIdxes)
+
+	if h.RepairIntoShardnodePercentage > 0 {
+		percentage := (atomic.AddInt64(&h.repairRoundrobin, 1) % 100) + 1
+		if percentage <= h.RepairIntoShardnodePercentage {
+			span.Debugf("to repair into shardnode %s", blob.String())
+			h.sendRepairMsgIntoShardnode(ctx, blob, badIdxes)
+			return
+		}
+	}
 
 	clusterID := blob.cid
 	serviceController, err := h.clusterController.GetServiceController(clusterID)

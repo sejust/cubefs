@@ -665,6 +665,66 @@ func (h *Handler) fixCreateBlobArgs(ctx context.Context, args *acapi.CreateBlobA
 	return nil
 }
 
+func (h *Handler) getRepairMessageShardnode(ctx context.Context,
+	shardController controller.IShardController, clusterID proto.ClusterID, blob blobIdent, badIdxes []uint8,
+) (args shardnode.RepairSliceArgs, host string, err error) {
+	args.Vid = blob.vid
+	args.Bid = blob.bid
+	args.Reason = "access-repair"
+	for _, idx := range badIdxes {
+		args.BadIdx = append(args.BadIdx, uint32(idx))
+	}
+	tagNum := shardController.GetShardSubRangeCount(ctx)
+	var shard controller.Shard
+	shard, err = shardController.GetShard(ctx, args.GetShardKeys(tagNum))
+	if err != nil {
+		return
+	}
+	args.Header, err = h.getOpHeaderByShard(ctx, shardController, shard, acapi.GetShardModeLeader)
+	if err != nil {
+		return
+	}
+	host, err = h.getShardHost(ctx, clusterID, args.Header.DiskID)
+	return
+}
+
+func (h *Handler) sendRepairMsgIntoShardnode(ctx context.Context, blob blobIdent, badIdxes []uint8) {
+	span := trace.SpanFromContextSafe(ctx)
+	clusterID := blob.cid
+	shardController, err := h.clusterController.GetShardController(clusterID)
+	if err != nil {
+		span.Error(errors.Detail(err))
+		return
+	}
+
+	if err := retry.Timed(3, 100).On(func() error {
+		args, host, err := h.getRepairMessageShardnode(ctx, shardController, clusterID, blob, badIdxes)
+		if err != nil {
+			reportUnhealth(clusterID, "repair.msg", serviceShard, "-", "failed")
+			span.Warn(err)
+			return err
+		}
+		if err = h.shardnodeClient.RepairSlice(ctx, host, args); err != nil {
+			span.Warnf("send to shardnode %s repair message(%+v) %s", host, args, err.Error())
+			reportUnhealth(clusterID, "repair.msg", serviceShard, host, "failed")
+			_, err = h.punishAndUpdate(ctx, &punishArgs{
+				ShardOpHeader: args.Header,
+				clusterID:     clusterID,
+				host:          host,
+				mode:          acapi.GetShardModeLeader,
+				err:           err,
+			})
+			err = errors.Base(err, host)
+		}
+		return err
+	}); err != nil {
+		span.Errorf("send shardnode repair message(%+v) failed %s", blob, errors.Detail(err))
+		return
+	}
+
+	span.Infof("send shardnode repair message(%+v)", blob)
+}
+
 func (h *Handler) getDeleteMessageShardnode(ctx context.Context,
 	shardController controller.IShardController, clusterID proto.ClusterID, slice proto.Slice,
 ) (args shardnode.DeleteBlobRawArgs, host string, err error) {
