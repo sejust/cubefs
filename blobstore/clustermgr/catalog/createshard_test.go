@@ -22,6 +22,7 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cubefs/cubefs/blobstore/api/clustermgr"
 	"github.com/cubefs/cubefs/blobstore/clustermgr/base"
 	"github.com/cubefs/cubefs/blobstore/clustermgr/cluster"
 	"github.com/cubefs/cubefs/blobstore/common/codemode"
@@ -141,4 +142,53 @@ func TestCatalogMgr_finishLastCreateJob(t *testing.T) {
 		err = mockCatalogMgr.finishLastCreateJob(ctx)
 		require.NoError(t, err)
 	}
+}
+
+func TestCatalogMgr_applyCreateShard(t *testing.T) {
+	mockCatalogMgr, clean := initMockCatalogMgr(t, testConfig)
+	defer clean()
+
+	_, ctx := trace.StartSpanFromContext(context.Background(), "")
+
+	existingShard := mockCatalogMgr.allShards.getShard(1)
+	require.NotNil(t, existingShard)
+
+	newShardID := proto.ShardID(99)
+	unitCount := len(existingShard.unitEpochs)
+	unitEpochs := make([]*shardUnitEpoch, unitCount)
+	units := make([]clustermgr.ShardUnit, unitCount)
+	for i, ue := range existingShard.unitEpochs {
+		suid := proto.EncodeSuid(newShardID, ue.suidPrefix.Index(), proto.MinEpoch)
+		unitEpochs[i] = &shardUnitEpoch{
+			suidPrefix: suid.SuidPrefix(),
+			epoch:      suid.Epoch(),
+			nextEpoch:  suid.Epoch(),
+		}
+		units[i] = clustermgr.ShardUnit{
+			Suid:   suid,
+			DiskID: proto.DiskID(i + 1),
+		}
+	}
+	newShard := &shardItem{
+		shardID:    newShardID,
+		unitEpochs: unitEpochs,
+		info: shardInfoBase{
+			Shard: clustermgr.Shard{
+				ShardID: newShardID,
+				Range:   existingShard.info.Range,
+				Units:   units,
+			},
+		},
+	}
+
+	expectedRouteVersion := proto.RouteVersion(mockCatalogMgr.routeMgr.GetRouteVersion() + 1)
+	err := mockCatalogMgr.applyCreateShard(ctx, newShard)
+	require.NoError(t, err)
+	got := mockCatalogMgr.allShards.getShard(newShardID)
+	require.NotNil(t, got)
+	require.Equal(t, expectedRouteVersion, got.info.RouteVersion)
+
+	shardRecord, err := mockCatalogMgr.catalogTbl.GetShard(newShardID)
+	require.NoError(t, err)
+	require.Equal(t, expectedRouteVersion, shardRecord.RouteVersion)
 }

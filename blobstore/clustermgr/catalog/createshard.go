@@ -223,6 +223,7 @@ func (c *CatalogMgr) applyCreateShard(ctx context.Context, shard *shardItem) err
 		Type:         proto.CatalogChangeItemAddShard,
 		ItemDetail:   &routeItemShardAdd{ShardID: shard.shardID},
 	}
+	shardRecord.RouteVersion = proto.RouteVersion(routeVersion)
 	shardRecords := []*catalogdb.ShardInfoRecord{shardRecord}
 	routeRecords := []*base.RouteInfoRecord{routeItemToRouteRecord(route)}
 	if err := c.catalogTbl.PutShardsAndUnitsAndRouteItems(shardRecords, unitRecords, routeRecords); err != nil {

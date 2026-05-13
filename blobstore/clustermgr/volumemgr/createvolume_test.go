@@ -250,3 +250,30 @@ func TestVolumeMgr_finishLastCreateJob(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
+func TestVolumeMgr_applyCreateVolume(t *testing.T) {
+	mockVolumeMgr, clean := initMockVolumeMgr(t)
+	defer clean()
+
+	_, ctx := trace.StartSpanFromContext(context.Background(), "")
+
+	vols := generateVolume(codemode.EC15P12, 1, 99)
+	newVol := vols[0]
+
+	expectedRouteVersion := proto.RouteVersion(mockVolumeMgr.routeMgr.GetRouteVersion() + 1)
+
+	err := mockVolumeMgr.applyCreateVolume(ctx, newVol)
+	require.NoError(t, err)
+
+	got := mockVolumeMgr.all.getVol(newVol.vid)
+	require.NotNil(t, got)
+
+	require.Equal(t, expectedRouteVersion, got.volInfoBase.RouteVersion)
+	volRecord, err := mockVolumeMgr.volumeTbl.GetVolume(newVol.vid)
+	require.NoError(t, err)
+	require.Equal(t, expectedRouteVersion, volRecord.RouteVersion)
+
+	volumeRecord, err := mockVolumeMgr.volumeTbl.GetVolume(newVol.vid)
+	require.NoError(t, err)
+	require.Equal(t, expectedRouteVersion, volumeRecord.RouteVersion)
+}
