@@ -155,6 +155,44 @@ func TestDoubleCheckedRun(t *testing.T) {
 		err := c.DoubleCheckedRun(ctx, 1, func(*snproto.VolumeInfoSimple) (*snproto.VolumeInfoSimple, error) { return volume, nil })
 		require.ErrorIs(t, err, errVolumeMissmatch)
 	}
+	{
+		// check phase: UpdateVolume rate-limited, fallback to GetVolume with cached value,
+		// volume unchanged -> success with only one remote call
+		tp := mocks.NewMockVolumeTransport(ctr)
+		tp.EXPECT().GetVolumeInfo(any, any).Return(volume, nil).Times(1)
+
+		c := NewVolumeCache(tp, 10*time.Second)
+		err := c.DoubleCheckedRun(ctx, 1, func(*snproto.VolumeInfoSimple) (*snproto.VolumeInfoSimple, error) {
+			return volume, nil
+		})
+		require.NoError(t, err)
+	}
+	{
+		// check phase: UpdateVolume rate-limited, fallback to GetVolume;
+		// volume changed between retries when interval expires -> retry and succeed
+		newVolume := &snproto.VolumeInfoSimple{Vid: proto.Vid(1), VunitLocations: []proto.VunitLocation{{Vuid: 2}}}
+		tp := mocks.NewMockVolumeTransport(ctr)
+		// call 1: initial GetVolume (cache miss) -> stale volume
+		tp.EXPECT().GetVolumeInfo(any, any).Return(volume, nil)
+		// call 2: check phase of round 1, interval expired -> newVolume detected
+		tp.EXPECT().GetVolumeInfo(any, any).Return(newVolume, nil)
+		// call 3: check phase of round 2 confirms newVolume unchanged
+		tp.EXPECT().GetVolumeInfo(any, any).Return(newVolume, nil)
+
+		retry := 0
+		// interval=1ns so UpdateVolume always fetches fresh data (not rate-limited),
+		// verifying the non-fallback path also works after the change
+		c := NewVolumeCache(tp, 1)
+		err := c.DoubleCheckedRun(ctx, 1, func(vol *snproto.VolumeInfoSimple) (*snproto.VolumeInfoSimple, error) {
+			retry++
+			if retry == 2 {
+				return newVolume, nil
+			}
+			return volume, nil
+		})
+		require.NoError(t, err)
+		require.Equal(t, 2, retry)
+	}
 }
 
 func BenchmarkVolumeCache(b *testing.B) {

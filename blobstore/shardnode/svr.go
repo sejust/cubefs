@@ -174,12 +174,14 @@ func createService(cfg *Config) *service {
 	svr.catalog = c
 
 	taskSwitchMgr := taskswitch.NewSwitchMgr(cmClient)
+	volCache := base.NewVolumeCache(transport, 10*time.Second)
+
 	cfg.DeleteBlobCfg.ClusterID = cfg.NodeConfig.ClusterID
 	blboDeleteMgr, err := message.NewBlobDeleteMgr(&message.BlobDelMgrConfig{
 		TaskSwitchMgr: taskSwitchMgr,
 		ShardGetter:   svr,
 		BlobTransport: transport,
-		VolCache:      base.NewVolumeCache(transport, 10*time.Second),
+		VolCache:      volCache,
 		MessageCfg:    cfg.DeleteBlobCfg,
 	})
 	if err != nil {
@@ -193,7 +195,7 @@ func createService(cfg *Config) *service {
 			TaskSwitchMgr: taskSwitchMgr,
 			ShardGetter:   svr,
 			BlobTransport: transport,
-			VolCache:      base.NewVolumeCache(transport, 10*time.Second),
+			VolCache:      volCache,
 			MessageCfg:    cfg.SliceRepairCfg,
 		},
 		BlobNodeSelector: selector.MakeSelector(60*1000, func() (hosts []string, err error) {

@@ -197,7 +197,8 @@ func (m *messageMgr) produceLoop() {
 			roundTerm++
 		}
 		m.taskSwitch.WaitEnable()
-		span, ctx := trace.StartSpanFromContextWithTraceID(produceCtx, "", produceSpan.TraceID()+"-"+strconv.Itoa(roundTerm))
+		traceID := produceSpan.TraceID() + "-" + strconv.Itoa(int(m.cfg.messageType)) + "-" + strconv.Itoa(roundTerm)
+		span, ctx := trace.StartSpanFromContextWithTraceID(produceCtx, "", traceID)
 		if len(shards) == 0 {
 			span.Warnf("no shards available, waiting")
 			resetTicker2LongWait()
@@ -444,12 +445,12 @@ func (m *messageMgr) execute(ctx context.Context, msgList []snproto.MessageExt) 
 		m.errStatsDistribution.AddFail(r.err)
 		r.msgExt.AddRetry()
 		if r.msgExt.GetRetry()%m.cfg.RetryTimes != 0 {
-			m.sentToFailedChan(ctx, r.msgExt)
+			m.sentToFailedChan(r.ctx, r.msgExt)
 			continue
 		}
 
 		// retry times % m.cfg.RetryTimes == 0, punish msgExt and update in store
-		if err := m.punish(ctx, r.msgExt); err != nil {
+		if err := m.punish(r.ctx, r.msgExt); err != nil {
 			return err
 		}
 	}

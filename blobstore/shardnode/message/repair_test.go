@@ -285,7 +285,7 @@ func TestSliceRepairMgr_ExecuteWithCheckVolConsistency_UpdateVolume(t *testing.T
 			return volInfo, nil
 		}
 		return newVolInfo, nil
-	}).Times(2)
+	}).Times(3)
 
 	vc := base.NewVolumeCache(volTp, 1)
 

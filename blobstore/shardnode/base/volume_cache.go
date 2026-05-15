@@ -209,7 +209,10 @@ func (c *volumeCache) DoubleCheckedRun(ctx context.Context, vid proto.Vid, task 
 			return err
 		}
 
-		newVolume, err := c.GetVolume(vid)
+		newVolume, err := c.UpdateVolume(vid)
+		if errors.Is(err, cmerrors.ErrUpdateVolCacheFreq) {
+			newVolume, err = c.GetVolume(vid)
+		}
 		if err != nil {
 			return err
 		}
