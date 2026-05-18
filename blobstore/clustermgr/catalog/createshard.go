@@ -43,12 +43,15 @@ func (c *CatalogMgr) createShard(ctx context.Context) error {
 	span := trace.SpanFromContextSafe(ctx)
 
 	// alloc shardID and shard range, and save initial shard and unit info into transited tbl
-	createShardCtxs := make([]createShardCtx, 0, c.InitShardNum)
-	minShardID, _, err := c.scopeMgr.Alloc(ctx, shardIDScopeName, c.InitShardNum)
+	ranges := sharding.InitShardingRange(sharding.RangeType_RangeTypeHash, 2, c.InitShardNum)
+	if len(ranges) != c.InitShardNum {
+		span.Warnf("InitShardNum %d expanded to %d due to sharding algorithm power-of-2 rounding", c.InitShardNum, len(ranges))
+	}
+	createShardCtxs := make([]createShardCtx, 0, len(ranges))
+	minShardID, _, err := c.scopeMgr.Alloc(ctx, shardIDScopeName, len(ranges))
 	if err != nil {
 		return errors.Info(err, "scope alloc shardID failed")
 	}
-	ranges := sharding.InitShardingRange(sharding.RangeType_RangeTypeHash, 2, c.InitShardNum)
 	unitCount := c.CodeMode.GetShardNum()
 	for i := 0; i < len(ranges); i++ {
 		shardID := proto.ShardID(minShardID + uint64(i))
@@ -234,7 +237,7 @@ func (c *CatalogMgr) applyCreateShard(ctx context.Context, shard *shardItem) err
 	c.routeMgr.InsertRouteItems(ctx, []*base.RouteItem{route})
 	shard.info.RouteVersion = proto.RouteVersion(routeVersion)
 
-	if c.allShards.getShardNum() == c.InitShardNum {
+	if c.allShards.getShardNum() == c.actualInitShardNum {
 		err := c.kvMgr.Set(proto.ShardInitDoneKey, []byte("1"))
 		if err != nil {
 			return errors.Info(err, "put shard init done key to kv failed")

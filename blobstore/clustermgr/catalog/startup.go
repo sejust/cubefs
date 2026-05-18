@@ -28,6 +28,7 @@ import (
 	"github.com/cubefs/cubefs/blobstore/common/kvstore"
 	"github.com/cubefs/cubefs/blobstore/common/proto"
 	"github.com/cubefs/cubefs/blobstore/common/raftserver"
+	"github.com/cubefs/cubefs/blobstore/common/sharding"
 	"github.com/cubefs/cubefs/blobstore/common/trace"
 	"github.com/cubefs/cubefs/blobstore/util/defaulter"
 	"github.com/cubefs/cubefs/blobstore/util/errors"
@@ -75,12 +76,16 @@ func NewCatalogMgr(conf Config, diskMgr cluster.ShardNodeManagerAPI, scopeMgr sc
 		return nil, errors.Info(err, "open transited table failed").Detail(err)
 	}
 
+	// Compute actual range count; InitShardingRange may round up to the next power of 2.
+	actualInitShardNum := len(sharding.InitShardingRange(sharding.RangeType_RangeTypeHash, 2, conf.InitShardNum))
+
 	// initial catalogMgr
 	catalogMgr := &CatalogMgr{
-		allShards:    newConcurrentShards(conf.ShardConcurrentMapNum),
-		allSpaces:    newConcurrentSpaces(conf.SpaceConcurrentMapNum),
-		catalogTbl:   catalogTable,
-		transitedTbl: transitedTable,
+		allShards:          newConcurrentShards(conf.ShardConcurrentMapNum),
+		allSpaces:          newConcurrentSpaces(conf.SpaceConcurrentMapNum),
+		catalogTbl:         catalogTable,
+		transitedTbl:       transitedTable,
+		actualInitShardNum: actualInitShardNum,
 
 		applyTaskPool:   base.NewTaskDistribution(int(conf.ApplyConcurrency), 1),
 		scopeMgr:        scopeMgr,
