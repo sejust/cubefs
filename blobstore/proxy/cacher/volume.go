@@ -66,7 +66,7 @@ func (c *cacher) GetVolume(ctx context.Context, args *proxy.CacheVolumeArgs) (*c
 			return &vol.VolumeInfo, nil
 		}
 
-		if args.Version > 0 && args.Version != uint64(vol.RouteVersion) {
+		if args.Version > 0 && args.Version <= uint64(vol.RouteVersion) {
 			span.Infof("request to flush, but version mismatch request(%d) != cache(%d)",
 				args.Version, vol.RouteVersion)
 			return &vol.VolumeInfo, nil
@@ -97,23 +97,23 @@ func (c *cacher) GetVolume(ctx context.Context, args *proxy.CacheVolumeArgs) (*c
 	}
 	c.volumeReport("clustermgr", "hit")
 
-	var result *clustermgr.VolumeInfo
-	if err := c.withVolumeLock(vid, func() error {
-		if cached := c.getVolume(span, vid); cached != nil && cached.RouteVersion > volume.RouteVersion {
-			span.Infof("skip storing stale cm volume vid:%d since cached route version %d > %d",
-				vid, cached.RouteVersion, volume.RouteVersion)
-			result = &cached.VolumeInfo
+	go func() {
+		_span, _ctx := trace.StartSpanFromContextWithTraceID(context.Background(), "", span.TraceID())
+		defer _span.Finish()
+		err := c.withVolumeLock(vid, func() error {
+			if cached := c.getVolume(_span, vid); cached != nil && cached.RouteVersion > volume.RouteVersion {
+				_span.Infof("skip storing stale cm volume vid:%d ", vid)
+				return nil
+			}
+			vol := c.newExpiryVolume(*volume)
+			c.storeVolume(_ctx, vid, vol)
 			return nil
+		})
+		if err != nil {
+			_span.Warnf("write volume info to kv failed: %s", err)
 		}
-
-		vol := c.newExpiryVolume(*volume)
-		c.storeVolume(ctx, vid, vol)
-		result = &vol.VolumeInfo
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	return result, nil
+	}()
+	return volume, nil
 }
 
 func (c *cacher) getVolume(span trace.Span, vid proto.Vid) *expiryVolume {
@@ -193,7 +193,6 @@ func (c *cacher) syncVolumeRoutes(ctx context.Context) error {
 		if err := c.applyVolumeRouteItem(ctx, item); err != nil {
 			return err
 		}
-		span.Debugf("applied volume route item: %+v", item)
 	}
 
 	if err := c.persistVolRouteVersion(ctx, ret.RouteVersion); err != nil {
@@ -208,18 +207,23 @@ func (c *cacher) applyVolumeRouteItem(ctx context.Context, item clustermgr.Volum
 	if item.Item == nil {
 		return errors.New("volume route item missing payload")
 	}
+	span := trace.SpanFromContextSafe(ctx)
 	switch item.Type {
 	case proto.RouteItemTypeAddVolume:
 		payload := clustermgr.RouteItemAddVolume{}
 		if err := payload.Unmarshal(item.Item.Value); err != nil {
 			return err
 		}
+		payload.VolumeInfoBase.RouteVersion = item.RouteVersion
+		span.Debugf("apply volume route item: %+v", payload)
 		return c.applyVolumeAdd(ctx, &payload)
 	case proto.RouteItemTypeUpdateVolume:
 		payload := clustermgr.RouteItemUpdateVolume{}
 		if err := payload.Unmarshal(item.Item.Value); err != nil {
 			return err
 		}
+		payload.VolumeInfoBase.RouteVersion = item.RouteVersion
+		span.Debugf("apply volume route item: %+v", payload)
 		return c.applyVolumeUpdate(ctx, &payload)
 	default:
 		return fmt.Errorf("unknown volume route item type: %d", item.Type)
@@ -276,7 +280,7 @@ func (c *cacher) newExpiryVolume(info clustermgr.VolumeInfo) *expiryVolume {
 
 func (c *cacher) storeVolume(ctx context.Context, vid proto.Vid, vol *expiryVolume) {
 	c.volumeCache.Set(vid, vol)
-	go c.writeVolumeToDisk(ctx, vid, vol)
+	c.writeVolumeToDisk(ctx, vid, vol)
 }
 
 func (c *cacher) writeVolumeToDisk(ctx context.Context, vid proto.Vid, vol *expiryVolume) {

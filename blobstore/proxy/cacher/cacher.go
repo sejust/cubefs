@@ -243,6 +243,8 @@ func (c *cacher) getCachedValue(span trace.Span, id any, key string, expiration 
 				return value
 			}
 			reporter("memcache", "expired")
+			span.Debugf("memory cache value has expired:%s id:%v", key, id)
+			return nil
 		}
 	}
 	reporter("memcache", "miss")
