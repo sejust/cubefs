@@ -90,6 +90,7 @@ type volumeChunkInfo struct {
 	TotalChunks  int
 	Tolerance    int            // max chunks that can be lost = Total - (N+margin)
 	Margin       int            // safety margin (default 1)
+	BaseLost     int            // lost chunks from unavailable disks (broken/repairing/repaired/dropped)
 	NodeChunkCnt map[string]int // host -> chunk count on this host
 }
 
@@ -172,6 +173,9 @@ func cmdMigrate(c *grumble.Context) error {
 					return fmt.Errorf("list disks for host %s failed: %w", host, err)
 				}
 				for _, disk := range disksOneQuery.Disks {
+					if disk.Status != proto.DiskStatusNormal {
+						continue
+					}
 					nodeDiskIDs[host] = append(nodeDiskIDs[host], disk.DiskID)
 					if nodeInfoMap[host] == nil {
 						nodeInfoMap[host] = &nodeInfo{
@@ -201,7 +205,7 @@ func cmdMigrate(c *grumble.Context) error {
 				return fmt.Errorf("list all disks failed: %w", err)
 			}
 			for _, disk := range disksOneQuery.Disks {
-				if disk.Status >= proto.DiskStatusRepaired {
+				if disk.Status != proto.DiskStatusNormal {
 					continue
 				}
 				host := disk.Host
@@ -273,6 +277,31 @@ func cmdMigrate(c *grumble.Context) error {
 		}
 	}
 
+	// Build bad disk set (broken/repairing) to account existing loss baseline.
+	unavailableDisks := make(map[proto.DiskID]bool)
+	for _, st := range []proto.DiskStatus{proto.DiskStatusBroken, proto.DiskStatusRepairing} {
+		listBadDiskArgs := &clustermgr.ListOptionArgs{
+			Status: st,
+			Marker: proto.DiskID(0),
+			Count:  1000,
+		}
+		for {
+			disksOneQuery, err := cmClient.ListDisk(ctx, listBadDiskArgs)
+			if err != nil {
+				return fmt.Errorf("list disks by status %s failed: %w", st.String(), err)
+			}
+			for _, disk := range disksOneQuery.Disks {
+				unavailableDisks[disk.DiskID] = true
+			}
+			listBadDiskArgs.Marker = disksOneQuery.Marker
+			if listBadDiskArgs.Marker <= proto.InvalidDiskID || len(disksOneQuery.Disks) == 0 {
+				break
+			}
+		}
+	}
+	if verbose {
+		fmt.Printf("Found %d bad disks (broken/repairing) in cluster\n", len(unavailableDisks))
+	}
 	// Step 2: Get volume info using ListVolume
 	fmt.Println(zone_line)
 	fmt.Println("Fetching volume information...")
@@ -305,10 +334,14 @@ func cmdMigrate(c *grumble.Context) error {
 	for vid, volInfo := range allVolumes {
 		nodeChunkCnt := make(map[string]int)
 		hasTargetDisk := false
+		baseLost := 0
 		for _, unit := range volInfo.Units {
 			if host, ok := diskToHost[unit.DiskID]; ok {
 				nodeChunkCnt[host]++
 				hasTargetDisk = true
+			}
+			if unavailableDisks[unit.DiskID] {
+				baseLost++
 			}
 		}
 		if !hasTargetDisk {
@@ -327,6 +360,7 @@ func cmdMigrate(c *grumble.Context) error {
 			TotalChunks:  totalChunks,
 			Tolerance:    tolerance,
 			Margin:       margin,
+			BaseLost:     baseLost,
 			NodeChunkCnt: nodeChunkCnt,
 		}
 	}
@@ -339,7 +373,7 @@ func cmdMigrate(c *grumble.Context) error {
 	fmt.Println("Greedy add node to find maximum...")
 	canMigrate := func(selectedHosts map[string]bool) bool {
 		for vid, info := range volumeInfos {
-			lostChunks := 0
+			lostChunks := info.BaseLost
 			for host := range selectedHosts {
 				lostChunks += info.NodeChunkCnt[host]
 			}
@@ -540,7 +574,7 @@ func blockingVolumes(ctx context.Context,
 	var blockingVolumes []blockingVol
 
 	for _, info := range volumeInfos {
-		lostChunks := 0
+		lostChunks := info.BaseLost
 		for host, cnt := range info.NodeChunkCnt {
 			if inputNodeSet[host] {
 				lostChunks += cnt
@@ -563,8 +597,8 @@ func blockingVolumes(ctx context.Context,
 
 	fmt.Println(zone_line)
 	fmt.Printf("Blocking volumes: %s (need migrate)\n", common.Warn.Sprint(len(blockingVolumes)))
-	fmt.Printf("%-12s %-15s %-6s %-8s %-10s %-8s %-8s\n",
-		"Vid", "CodeMode", "N", "Total", "Tolerance", "Lost", "Exceed")
+	fmt.Printf("%-12s %-15s %-6s %-8s %-10s %-8s %-8s %-8s\n",
+		"Vid", "CodeMode", "N", "Total", "Tolerance", "Base", "Stop", "Exceed")
 	fmt.Println(strings.Repeat("-", 75))
 
 	showCount := len(blockingVolumes)
@@ -575,10 +609,11 @@ func blockingVolumes(ctx context.Context,
 	for i, bv := range blockingVolumes {
 		exceed := bv.lostChunks - bv.info.Tolerance
 		totalExceed += exceed
+		stopLost := bv.lostChunks - bv.info.BaseLost
 		if i < showCount {
-			fmt.Printf("%-12d %-15s %-6d %-8d %-10d %-8d %-8d\n",
+			fmt.Printf("%-12d %-15s %-6d %-8d %-10d %-8d %-8d %-8d\n",
 				bv.info.Vid, bv.info.CodeMode, bv.info.N, bv.info.TotalChunks,
-				bv.info.Tolerance, bv.lostChunks, exceed)
+				bv.info.Tolerance, bv.info.BaseLost, stopLost, exceed)
 		}
 	}
 	if len(blockingVolumes) > showCount {
@@ -589,9 +624,73 @@ func blockingVolumes(ctx context.Context,
 	fmt.Printf("Summary: %d blocking volumes, need to pre-migrate at least %s chunks\n",
 		len(blockingVolumes), common.Warn.Sprint(totalExceed))
 
-	// Auto create migrate tasks if --move_task is set
-	if !moveTask {
+	type migratePlan struct {
+		vid      proto.Vid
+		needMove int
+		vuids    []proto.Vuid
+	}
+	plans := make([]migratePlan, 0, len(blockingVolumes))
+	impossibleVolumes := make([]proto.Vid, 0)
+	var vuidsToMigrate []proto.Vuid
+	for _, bv := range blockingVolumes {
+		volInfo := allVolumes[bv.info.Vid]
+		if volInfo == nil {
+			continue
+		}
+		needMove := bv.lostChunks - bv.info.Tolerance
+		if needMove <= 0 {
+			continue
+		}
+		needBeforeClip := needMove
+		candidates := make([]proto.Vuid, 0)
+		for _, unit := range volInfo.Units {
+			if host, ok := diskToHost[unit.DiskID]; ok && inputNodeSet[host] {
+				candidates = append(candidates, unit.Vuid)
+			}
+		}
+		sort.Slice(candidates, func(i, j int) bool { return candidates[i] < candidates[j] })
+		if needMove > len(candidates) {
+			impossibleVolumes = append(impossibleVolumes, bv.info.Vid)
+			needMove = len(candidates)
+		}
+		pick := append([]proto.Vuid(nil), candidates[:needMove]...)
+		vuidsToMigrate = append(vuidsToMigrate, pick...)
+		if needMove > 0 {
+			plans = append(plans, migratePlan{vid: bv.info.Vid, needMove: needMove, vuids: pick})
+		}
+		if needBeforeClip > len(candidates) {
+			fmt.Printf("  ! vid=%d requires %d chunks, but only %d chunks are on stopping nodes\n",
+				bv.info.Vid, needBeforeClip, len(candidates))
+		}
+	}
+
+	fmt.Println()
+	fmt.Println(zone_line)
+	showPlan := len(plans)
+	for i := 0; i < showPlan; i++ {
+		p := plans[i]
+		fmt.Printf("  vid=%d need=%d vuids=%v\n", p.vid, p.needMove, p.vuids)
+	}
+
+	fmt.Printf("Total VUIDs to migrate: %d\n", len(vuidsToMigrate))
+	if len(vuidsToMigrate) == 0 {
+		fmt.Println("No migratable VUIDs found from input nodes.")
 		return
+	}
+	if len(impossibleVolumes) > 0 {
+		fmt.Printf("Warning: %d volumes cannot be fully satisfied by migrating only stopping-node chunks.\n", len(impossibleVolumes))
+	}
+	if len(vuidsToMigrate) > 1000 && !force {
+		fmt.Println("too many migrate task (>1000)")
+		return
+	}
+
+	if !moveTask {
+		fmt.Println()
+		if !common.Confirm(fmt.Sprintf("Generate %s migrate tasks now?", common.Danger.Sprint(len(vuidsToMigrate)))) {
+			fmt.Println("Skip creating migrate tasks.")
+			return
+		}
 	}
 
 	fmt.Println()
@@ -606,29 +705,6 @@ func blockingVolumes(ctx context.Context,
 	clusterID := proto.ClusterID(schedulers.Nodes[0].ClusterID)
 	schedulerCli := scheduler.New(&scheduler.Config{}, cmClient, clusterID)
 
-	var vuidsToMigrate []proto.Vuid
-	for _, bv := range blockingVolumes {
-		volInfo := allVolumes[bv.info.Vid]
-		if volInfo == nil {
-			continue
-		}
-		exceed := bv.lostChunks - bv.info.Tolerance
-		migrated := 0
-		for _, unit := range volInfo.Units {
-			if host, ok := diskToHost[unit.DiskID]; ok && inputNodeSet[host] {
-				if migrated < exceed {
-					vuidsToMigrate = append(vuidsToMigrate, unit.Vuid)
-					migrated++
-				}
-			}
-		}
-	}
-
-	fmt.Printf("Total VUIDs to migrate: %d\n", len(vuidsToMigrate))
-	if len(vuidsToMigrate) > 1000 && !force {
-		fmt.Println("too many migrate task (>1000)")
-		return
-	}
 	for range [3]struct{}{} {
 		if !common.Confirm(fmt.Sprintf("Create %s migrate tasks?", common.Danger.Sprint(len(vuidsToMigrate)))) {
 			fmt.Println("Cancelled.")
