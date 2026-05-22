@@ -91,6 +91,10 @@ func (r *SliceRepairMgr) Repair(ctx context.Context, req *snapi.RepairSliceArgs)
 	return r.insertRepairMsg(ctx, req)
 }
 
+func (m *SliceRepairMgr) DeleteShardLabels(shardID proto.ShardID) {
+	m.cfg.reporter.DeleteShardLabels(shardID)
+}
+
 func (r *SliceRepairMgr) Stats() *snapi.ShardnodeTaskStatsRet {
 	repairSuccessCounter, repairFailedCounter := r.getTaskStats()
 	repairErrStats, repairTotalErrCnt := r.getErrorStats()

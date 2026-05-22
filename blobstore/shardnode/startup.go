@@ -271,6 +271,8 @@ func (s *service) waitRepairCloseDisk(ctx context.Context, disk *storage.Disk) {
 		delete(s.disks, diskID)
 		s.lock.Unlock()
 
+		s.diskRocksdbReporter.DeleteDiskLabels(diskInfo.Path)
+		s.diskHealthReporter.DeleteDiskLabels(diskInfo.Path)
 		disk.Close()
 	}()
 

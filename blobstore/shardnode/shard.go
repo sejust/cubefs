@@ -273,6 +273,7 @@ func (s *service) executeShardTask(ctx context.Context, task clustermgr.ShardTas
 					_span.Errorf("delete shard task[%+v] failed: %s", task, errors.Detail(err))
 					return err
 				}
+				s.deleteShardMetrics(task.DiskID, task.Suid)
 				return nil
 			}
 			errMsg := fmt.Sprintf("route version not match, current: %d, task old: %d, task new: %d",
@@ -423,6 +424,13 @@ func (s *service) generateTasksAndExecute(
 			continue
 		}
 	}
+}
+
+func (s *service) deleteShardMetrics(diskID proto.DiskID, suid proto.Suid) {
+	s.shardRaftStatusReporter.DeleteShardLabels(diskID, suid)
+	s.shardMetaStatusReporter.DeleteShardLabels(suid.ShardID())
+	s.blobDelMgr.DeleteShardLabels(suid.ShardID())
+	s.sliceRepairMgr.DeleteShardLabels(suid.ShardID())
 }
 
 func (s *service) diskMetricReport(ctx context.Context) {

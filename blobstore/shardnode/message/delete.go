@@ -69,6 +69,10 @@ func (m *BlobDeleteMgr) Delete(ctx context.Context, req *snapi.DeleteBlobRawArgs
 	return m.insertDeleteMsg(ctx, req)
 }
 
+func (m *BlobDeleteMgr) DeleteShardLabels(shardID proto.ShardID) {
+	m.cfg.reporter.DeleteShardLabels(shardID)
+}
+
 func (m *BlobDeleteMgr) Stats() *snapi.ShardnodeTaskStatsRet {
 	deleteSuccessCounter, deleteFailedCounter := m.getTaskStats()
 	delErrStats, delTotalErrCnt := m.getErrorStats()

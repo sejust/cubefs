@@ -195,6 +195,19 @@ var (
 	repairSliceTaskName = "shard_node_repair_slice_task"
 
 	blobTaskLabels = []string{"shard_id", "task_status"}
+
+	shardRaftItems = []string{"leader", "applied", "commit"}
+
+	shardMetaItems = []string{"item_count", "item_size", "blob_count", "blob_size"}
+
+	blobTaskStatuses = []string{"success", "failed"}
+
+	diskRocksdbItems = []string{
+		"used", "block_cache_usage", "index_and_filter_usage", "memtable_usage",
+		"block_pinned_usage", "total_memory_usage", "level0_file_num", "write_slowdown",
+		"write_stop", "running_flush", "pending_flush", "running_compaction",
+		"pending_compaction", "background_errors",
+	}
 )
 
 type (
@@ -252,17 +265,18 @@ func NewRepairSliceTaskReporter(clusterID proto.ClusterID) *MessageTaskReporter 
 }
 
 func (r *MessageTaskReporter) ReportSuccess(shardID proto.ShardID) {
-	r.counterVec.WithLabelValues(
-		shardID.ToString(),
-		"success",
-	).Inc()
+	r.counterVec.WithLabelValues(shardID.ToString(), blobTaskStatuses[0]).Inc()
 }
 
 func (r *MessageTaskReporter) ReportFailed(shardID proto.ShardID) {
-	r.counterVec.WithLabelValues(
-		shardID.ToString(),
-		"failed",
-	).Inc()
+	r.counterVec.WithLabelValues(shardID.ToString(), blobTaskStatuses[1]).Inc()
+}
+
+func (r *MessageTaskReporter) DeleteShardLabels(shardID proto.ShardID) {
+	shardIDStr := shardID.ToString()
+	for _, status := range blobTaskStatuses {
+		r.counterVec.DeleteLabelValues(shardIDStr, status)
+	}
 }
 
 func NewDiskRocksdbStatusReporter(clusterID proto.ClusterID) *DiskRocksdbStatsReporter {
@@ -277,32 +291,34 @@ func NewDiskRocksdbStatusReporter(clusterID proto.ClusterID) *DiskRocksdbStatsRe
 	}
 }
 
+func (r *DiskRocksdbStatsReporter) DeleteDiskLabels(diskPath string) {
+	for _, dbName := range []string{"kv", "raft"} {
+		for _, item := range diskRocksdbItems {
+			r.gaugeVec.DeleteLabelValues(diskPath, dbName, item)
+		}
+	}
+}
+
 func (r *DiskRocksdbStatsReporter) Report(dbName string, diskPath string, stats kvstore.Stats) {
-	metrics := []struct {
-		item  string
-		value float64
-	}{
-		{"used", float64(stats.Used)},
-		{"block_cache_usage", float64(stats.MemoryUsage.BlockCacheUsage)},
-		{"index_and_filter_usage", float64(stats.MemoryUsage.IndexAndFilterUsage)},
-		{"memtable_usage", float64(stats.MemoryUsage.MemtableUsage)},
-		{"block_pinned_usage", float64(stats.MemoryUsage.BlockPinnedUsage)},
-		{"total_memory_usage", float64(stats.MemoryUsage.Total)},
-		{"level0_file_num", float64(stats.Level0FileNum)},
-		{"write_slowdown", boolToFloat64(stats.WriteSlowdown)},
-		{"write_stop", boolToFloat64(stats.WriteStop)},
-		{"running_flush", float64(stats.RunningFlush)},
-		{"pending_flush", boolToFloat64(stats.PendingFlush)},
-		{"running_compaction", float64(stats.RunningCompaction)},
-		{"pending_compaction", boolToFloat64(stats.PendingCompaction)},
-		{"background_errors", float64(stats.BackgroundErrors)},
+	values := []float64{
+		float64(stats.Used),
+		float64(stats.MemoryUsage.BlockCacheUsage),
+		float64(stats.MemoryUsage.IndexAndFilterUsage),
+		float64(stats.MemoryUsage.MemtableUsage),
+		float64(stats.MemoryUsage.BlockPinnedUsage),
+		float64(stats.MemoryUsage.Total),
+		float64(stats.Level0FileNum),
+		boolToFloat64(stats.WriteSlowdown),
+		boolToFloat64(stats.WriteStop),
+		float64(stats.RunningFlush),
+		boolToFloat64(stats.PendingFlush),
+		float64(stats.RunningCompaction),
+		boolToFloat64(stats.PendingCompaction),
+		float64(stats.BackgroundErrors),
 	}
 
-	for _, m := range metrics {
-		r.gaugeVec.WithLabelValues(
-			diskPath,
-			dbName,
-			m.item).Set(m.value)
+	for i, item := range diskRocksdbItems {
+		r.gaugeVec.WithLabelValues(diskPath, dbName, item).Set(values[i])
 	}
 }
 
@@ -330,6 +346,10 @@ func (r *DiskHealthReporter) ReportUnhealthy(diskPath string) {
 	).Set(1)
 }
 
+func (r *DiskHealthReporter) DeleteDiskLabels(diskPath string) {
+	r.gaugeVec.DeleteLabelValues(diskPath)
+}
+
 func NewShardMetaStatsReporter(clusterID proto.ClusterID) *ShardMetaStatsReporter {
 	reporter := newGuageVecReporter(
 		clusterID,
@@ -344,20 +364,21 @@ func NewShardMetaStatsReporter(clusterID proto.ClusterID) *ShardMetaStatsReporte
 
 func (r *ShardMetaStatsReporter) Report(metaStats snproto.ShardMetaStats) {
 	shardIDStr := metaStats.ShardID.ToString()
-	metrics := []struct {
-		item  string
-		value float64
-	}{
-		{"item_count", float64(metaStats.ItemCount)},
-		{"item_size", float64(metaStats.ItemSize)},
-		{"blob_count", float64(metaStats.BlobCount)},
-		{"blob_size", float64(metaStats.BlobSize)},
+	values := []float64{
+		float64(metaStats.ItemCount),
+		float64(metaStats.ItemSize),
+		float64(metaStats.BlobCount),
+		float64(metaStats.BlobSize),
 	}
+	for i, item := range shardMetaItems {
+		r.gaugeVec.WithLabelValues(shardIDStr, item).Set(values[i])
+	}
+}
 
-	for _, m := range metrics {
-		r.gaugeVec.WithLabelValues(
-			shardIDStr,
-			m.item).Set(m.value)
+func (r *ShardMetaStatsReporter) DeleteShardLabels(shardID proto.ShardID) {
+	shardIDStr := shardID.ToString()
+	for _, item := range shardMetaItems {
+		r.gaugeVec.DeleteLabelValues(shardIDStr, item)
 	}
 }
 
@@ -376,25 +397,24 @@ func NewRaftStatsReporter(clusterID proto.ClusterID) *ShardRaftStatsReporter {
 func (r *ShardRaftStatsReporter) Report(shardStats snapi.ShardStats) {
 	suid := shardStats.Suid
 	diskIDStr := fmt.Sprintf("%d", shardStats.RaftStat.NodeID)
-	suidStr := suid.ToString()
 	shardIDStr := suid.ShardID().ToString()
-
-	metrics := []struct {
-		name  string
-		value float64
-	}{
-		{"leader", float64(shardStats.LeaderDiskID)},
-		{"applied", float64(shardStats.RaftStat.Applied)},
-		{"commit", float64(shardStats.RaftStat.Commit)},
+	suidStr := suid.ToString()
+	values := []float64{
+		float64(shardStats.LeaderDiskID),
+		float64(shardStats.RaftStat.Applied),
+		float64(shardStats.RaftStat.Commit),
 	}
+	for i, item := range shardRaftItems {
+		r.gaugeVec.WithLabelValues(diskIDStr, shardIDStr, suidStr, item).Set(values[i])
+	}
+}
 
-	for _, m := range metrics {
-		r.gaugeVec.WithLabelValues(
-			diskIDStr,
-			shardIDStr,
-			suidStr,
-			m.name,
-		).Set(m.value)
+func (r *ShardRaftStatsReporter) DeleteShardLabels(diskID proto.DiskID, suid proto.Suid) {
+	diskIDStr := fmt.Sprintf("%d", diskID)
+	shardIDStr := suid.ShardID().ToString()
+	suidStr := suid.ToString()
+	for _, item := range shardRaftItems {
+		r.gaugeVec.DeleteLabelValues(diskIDStr, shardIDStr, suidStr, item)
 	}
 }
 
